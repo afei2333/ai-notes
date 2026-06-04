@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>原理手记 · 把复杂拆到你能记住</title>
+<meta name="description" content="一座深度技术长文的档案馆。把复杂的系统，拆到你能记住的颗粒度。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0e10;
+    --bg-soft:#131417;
+    --ink:#ebe6da;
+    --ink-dim:#9a948a;
+    --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09);
+    --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --chip-bg:rgba(255,255,255,0.02);
+    --grain-op:0.05;
+    --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7;
+    --bg-soft:#eae4d6;
+    --ink:#22201a;
+    --ink-dim:#6a645a;
+    --ink-faint:#a8a191;
+    --accent:#b8512c;
+    --accent-soft:#c4744d;
+    --sage:#5d7466;
+    --line:rgba(34,32,26,0.12);
+    --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --chip-bg:rgba(34,32,26,0.025);
+    --grain-op:0.035;
+    --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:var(--sans);font-weight:300;line-height:1.8;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden;
+    transition:background .6s ease,color .6s ease;
+  }
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(120% 80% at 82% -12%, rgba(200,100,60,0.12), transparent 55%),
+      radial-gradient(90% 60% at 8% 112%, rgba(127,145,131,0.09), transparent 60%);
+  }
+  .grain{
+    position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .grid-lines{
+    position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px);
+    background-size:100% 4.5rem;
+    -webkit-mask-image:linear-gradient(transparent,black 22%,black 80%,transparent);
+            mask-image:linear-gradient(transparent,black 22%,black 80%,transparent);
+  }
+
+  /* ── top bar ───────────────────────────────── */
+  .topbar{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:1.1rem clamp(1.2rem,4vw,3rem);
+    backdrop-filter:blur(10px);
+    background:linear-gradient(var(--bg),var(--bg-fade));
+    border-bottom:1px solid var(--line);
+    transition:background .6s ease,border-color .6s ease;
+  }
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim)}
+  .wordmark b{color:var(--ink);font-weight:500}
+  .top-right{display:flex;align-items:center;gap:1rem}
+  .top-right .issue{font-family:var(--mono);font-size:0.66rem;letter-spacing:0.16em;color:var(--ink-faint);text-transform:uppercase}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── shell ─────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1080px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2.4rem)}
+
+  /* ── masthead ──────────────────────────────── */
+  .masthead{padding:clamp(8rem,16vh,11rem) 0 clamp(3rem,7vw,5rem)}
+  .kicker{
+    font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:2.4rem;display:flex;align-items:center;gap:0.9rem;flex-wrap:wrap;
+    opacity:0;animation:rise .9s .05s forwards;
+  }
+  .kicker .dash{width:34px;height:1px;background:var(--accent);opacity:.6}
+  .masthead h1{
+    font-family:var(--serif);font-weight:300;line-height:1.02;letter-spacing:-0.015em;
+    font-size:clamp(3rem,9.5vw,7rem);
+  }
+  .masthead h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .masthead h1 .l:nth-child(1){animation-delay:.16s}
+  .masthead h1 .l:nth-child(2){animation-delay:.30s}
+  .masthead h1 em{font-style:italic;color:var(--accent)}
+  .standfirst{
+    max-width:46ch;margin-top:2.6rem;color:var(--ink);font-size:1.22rem;font-weight:400;line-height:1.9;
+    opacity:0;animation:rise 1s .5s forwards;
+  }
+  .standfirst b{color:var(--accent-soft);font-weight:500}
+  .mast-meta{
+    display:flex;gap:2.6rem;flex-wrap:wrap;margin-top:3rem;
+    opacity:0;animation:rise 1s .66s forwards;
+  }
+  .mast-meta div{font-family:var(--mono);font-size:0.7rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .mast-meta b{display:block;font-family:var(--serif);font-size:1.55rem;color:var(--ink);font-weight:400;margin-bottom:0.25rem;letter-spacing:0}
+
+  /* ── contents heading ──────────────────────── */
+  .contents-bar{
+    display:flex;align-items:center;gap:1.2rem;padding-bottom:1.1rem;
+    border-bottom:1px solid var(--line-strong);margin-bottom:0.5rem;
+    opacity:0;animation:rise 1s .8s forwards;
+  }
+  .contents-bar .lbl{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-dim)}
+  .contents-bar .rule{flex:1;height:1px;background:var(--line)}
+  .contents-bar .yr{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.14em;color:var(--ink-faint)}
+
+  /* ── entries ───────────────────────────────── */
+  .archive{padding-bottom:6rem}
+  .entry{
+    position:relative;display:grid;grid-template-columns:clamp(56px,8vw,104px) 1fr auto;gap:clamp(1rem,3vw,2.4rem);
+    align-items:start;padding:clamp(2rem,4vw,2.8rem) 0;border-bottom:1px solid var(--line);
+    text-decoration:none;color:inherit;
+    opacity:0;animation:rise .9s forwards;
+  }
+  .entry::after{
+    content:"";position:absolute;left:0;bottom:-1px;height:1px;width:100%;
+    background:linear-gradient(90deg,var(--accent),var(--accent-soft));
+    transform:scaleX(0);transform-origin:left;transition:transform .7s cubic-bezier(.16,1,.3,1);
+  }
+  a.entry{cursor:pointer}
+  a.entry:hover::after{transform:scaleX(1)}
+
+  .e-no{
+    font-family:var(--serif);font-weight:300;font-size:clamp(2.2rem,5vw,3.6rem);line-height:1;
+    color:var(--ink-faint);transition:color .5s ease,transform .6s cubic-bezier(.16,1,.3,1);letter-spacing:-0.02em;
+  }
+  a.entry:hover .e-no{color:var(--accent)}
+
+  .e-main{min-width:0}
+  .e-top{display:flex;align-items:center;gap:0.9rem;flex-wrap:wrap;margin-bottom:0.9rem}
+  .e-kicker{font-family:var(--mono);font-size:0.64rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--sage)}
+  .e-star{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent);border:1px solid rgba(200,100,60,0.4);border-radius:1rem;padding:0.2rem 0.6rem}
+  .e-title{
+    font-family:var(--serif);font-weight:300;font-size:clamp(1.6rem,3.8vw,2.7rem);line-height:1.12;letter-spacing:-0.01em;
+    transition:transform .6s cubic-bezier(.16,1,.3,1),color .4s;
+  }
+  a.entry:hover .e-title{transform:translateX(8px)}
+  .e-dek{max-width:54ch;margin-top:1rem;color:var(--ink-dim);font-size:1.05rem;font-weight:400;line-height:1.85}
+  a.entry:hover .e-dek{color:var(--ink)}
+  .e-tags{display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:1.3rem}
+  .e-tags span{
+    font-family:var(--mono);font-size:0.68rem;color:var(--ink-dim);letter-spacing:0.04em;
+    border:1px solid var(--line-strong);border-radius:0.4rem;padding:0.32rem 0.7rem;background:var(--chip-bg);transition:all .4s;
+  }
+  a.entry:hover .e-tags span{border-color:rgba(200,100,60,0.25)}
+  .e-foot{display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap;margin-top:1.3rem;font-family:var(--mono);font-size:0.68rem;color:var(--ink-faint);letter-spacing:0.05em}
+  .e-foot .sep{opacity:.5}
+
+  .e-go{
+    align-self:center;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.14em;text-transform:uppercase;
+    color:var(--ink-dim);display:flex;align-items:center;gap:0.6rem;white-space:nowrap;transition:color .4s;
+  }
+  a.entry:hover .e-go{color:var(--accent)}
+  .e-go .arr{display:inline-block;transition:transform .5s cubic-bezier(.16,1,.3,1)}
+  a.entry:hover .e-go .arr{transform:translateX(6px)}
+
+  /* upcoming */
+  .entry.soon{opacity:0;animation:riseDim .9s forwards}
+  .soon .e-no,.soon .e-title{color:var(--ink-faint)}
+  .soon .e-dek{color:var(--ink-faint)}
+  .soon-tag{
+    align-self:center;font-family:var(--mono);font-size:0.62rem;letter-spacing:0.16em;text-transform:uppercase;
+    color:var(--ink-faint);border:1px dashed var(--line-strong);border-radius:1rem;padding:0.35rem 0.8rem;white-space:nowrap;
+  }
+
+  /* ── search + tag filter ───────────────────── */
+  .toolbar{opacity:0;animation:rise 1s .78s forwards;margin-bottom:2.4rem}
+  .search{
+    position:relative;display:flex;align-items:center;gap:0.85rem;
+    border:1px solid var(--line-strong);border-radius:0.8rem;padding:0.9rem 1.15rem;
+    background:var(--chip-bg);transition:border-color .4s;
+  }
+  .search:focus-within{border-color:var(--accent)}
+  .search svg{width:16px;height:16px;color:var(--ink-faint);flex:none}
+  .search input{
+    flex:1;background:none;border:none;outline:none;color:var(--ink);
+    font-family:var(--sans);font-size:1rem;font-weight:300;
+  }
+  .search input::placeholder{color:var(--ink-faint)}
+  .search .clear{
+    background:none;border:none;color:var(--ink-faint);cursor:pointer;
+    font-family:var(--mono);font-size:0.95rem;line-height:1;padding:0.2rem 0.35rem;transition:color .3s;
+  }
+  .search .clear:hover{color:var(--accent)}
+  .tagrow{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-top:1.15rem}
+  .tagrow .tlabel{
+    font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--ink-faint);margin-right:0.25rem;
+  }
+  .tagchip{
+    cursor:pointer;font-family:var(--mono);font-size:0.68rem;letter-spacing:0.04em;color:var(--ink-dim);
+    border:1px solid var(--line-strong);border-radius:0.45rem;padding:0.36rem 0.78rem;
+    background:var(--chip-bg);transition:all .35s;
+  }
+  .tagchip:hover{border-color:rgba(200,100,60,0.4);color:var(--ink)}
+  .tagchip.on{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+  /* entry tags double as filter triggers */
+  .e-tags span{cursor:pointer}
+  .e-tags span.on{background:var(--accent);border-color:var(--accent)!important;color:var(--bg)}
+  .count{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.14em;color:var(--ink-faint)}
+  .count b{color:var(--accent);font-weight:500}
+  .noresults{padding:3.5rem 0;text-align:center;font-family:var(--mono);font-size:0.8rem;letter-spacing:0.1em;color:var(--ink-faint)}
+  .noresults b{color:var(--ink-dim);font-weight:400}
+
+  @media(max-width:680px){
+    .entry{grid-template-columns:auto 1fr;gap:1rem 1.2rem}
+    .e-go,.soon-tag{grid-column:2;justify-self:start;margin-top:1rem;align-self:start}
+    a.entry:hover .e-title{transform:none}
+  }
+
+  /* ── colophon ──────────────────────────────── */
+  .colophon{
+    border-top:1px solid var(--line);padding:3rem 0 5rem;
+    display:flex;justify-content:space-between;align-items:flex-end;gap:2rem;flex-wrap:wrap;
+  }
+  .colophon .c-name{font-family:var(--serif);font-style:italic;font-size:1.4rem;color:var(--ink)}
+  .colophon .c-line{font-family:var(--mono);font-size:0.66rem;letter-spacing:0.1em;color:var(--ink-faint);line-height:2;max-width:34ch}
+  .colophon .c-mark{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.24em;text-transform:uppercase;color:var(--accent)}
+
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes riseDim{from{opacity:0;transform:translateY(28px)}to{opacity:.62;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.entry{opacity:1}.entry.soon{opacity:.62}.kicker,.masthead h1 .l,.standfirst,.mast-meta,.contents-bar{opacity:1}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="wordmark">原理手记 · <b>FIELD NOTES</b></div>
+    <div class="top-right">
+      <span class="issue">Vol.01 · 持续更新</span>
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- MASTHEAD -->
+    <section class="masthead">
+      <div class="kicker"><span class="dash"></span>一座深度技术长文的档案馆</div>
+      <h1>
+        <span class="l">把复杂，</span>
+        <span class="l">拆到<em>你能记住</em>。</span>
+      </h1>
+      <p class="standfirst">这里收录的每一篇，都从第一性原理出发，把一个复杂系统<b>一步一步、一格一格</b>地讲清楚——不止于「它能做什么」，而是「它究竟如何运转」。看完，你会真正记住它。</p>
+      <div class="mast-meta">
+        <div><b id="pubCount">01</b>篇已刊出</div>
+        <div><b>LLM · 系统 · 算法</b>主题</div>
+        <div><b>2026</b>持续更新</div>
+      </div>
+    </section>
+
+    <!-- CONTENTS -->
+    <section class="archive">
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+          <input id="search" type="text" placeholder="搜索文章、主题或标签…" autocomplete="off" aria-label="搜索文章">
+          <button class="clear" id="clearBtn" hidden aria-label="清除">✕</button>
+        </div>
+        <div class="tagrow" id="tagRow"><span class="tlabel">标签</span></div>
+      </div>
+
+      <div class="contents-bar">
+        <span class="lbl">目录 · Contents</span>
+        <span class="rule"></span>
+        <span class="count" id="countLbl"></span>
+      </div>
+
+      <div id="entries"></div>
+      <div class="noresults" id="noResults" hidden>没有匹配的文章 · <b>试试别的关键词或标签</b></div>
+    </section>
+
+    <!-- COLOPHON -->
+    <footer class="colophon">
+      <div>
+        <div class="c-name">原理手记 · Field Notes</div>
+        <div class="c-line">把复杂的技术，拆到你能记住的颗粒度。<br>每篇皆为手作长文，无追踪、无广告。</div>
+      </div>
+      <div class="c-mark">— 持续书写中 —</div>
+    </footer>
+  </main>
+
+<script>
+  // theme toggle, persisted & shared with the posts (key: llm-theme)
+  const themeBtn = document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight = document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){ document.documentElement.removeAttribute('data-theme'); localStorage.setItem('llm-theme','dark'); }
+    else { document.documentElement.setAttribute('data-theme','light'); localStorage.setItem('llm-theme','light'); }
+  });
+
+  /* ───────────────────────────────────────────────────────────
+     POSTS — the single source of truth for the archive.
+     To publish a new article: add an object here (newest first is
+     fine; `no` controls the displayed index). Set status:'published'
+     with a `slug`; use status:'soon' for a forthcoming teaser.
+     Fields: no, status, title, dek, tags[], and for published:
+     slug, kicker, featured(★), meta[] (shown in the footer).
+     ─────────────────────────────────────────────────────────── */
+  const POSTS = [
+    {
+      no:'01', status:'published', slug:'llm-lifecycle.html', featured:true,
+      kicker:'交互长文 · Interactive',
+      title:'大语言模型的一生',
+      dek:'从散落于互联网的原始文本，到屏幕上流淌而出的那句回答——拆解训练、对齐与推理的 11 个阶段。重点详述预训练：自监督目标、训练循环、损失下降，看一句话如何被数万亿参数算出来。',
+      tags:['LLM','预训练','注意力','RLHF','推理'],
+      meta:['11 阶段全流程','滚动叙事','约 12 分钟']
+    },
+    {
+      no:'02', status:'published', slug:'attention-mechanism.html', featured:false,
+      kicker:'交互长文 · Interactive',
+      title:'注意力机制，逐矩阵拆解',
+      dek:'Q、K、V 到底是什么？为什么要除以 √dₖ？softmax 之后又发生了什么？用一句三个字的话「猫很累」，把一次 self-attention 连数字一起、一格一格地算给你看。',
+      tags:['Transformer','注意力','Self-Attention','线性代数','Softmax'],
+      meta:['10 步拆解','滚动叙事','约 10 分钟']
+    },
+    {
+      no:'03', status:'soon',
+      title:'反向传播：梯度如何流动',
+      dek:'链式法则不是公式，是一条信息逆流的河。跟着一个误差信号，看它如何从损失一路回溯，告诉每个参数该往哪挪。',
+      tags:['Backprop','微积分','优化器']
+    },
+    {
+      no:'04', status:'soon',
+      title:'Tokenizer：文字与数字之间',
+      dek:'BPE 是怎么把「世界」切成子词的？为什么模型数不清一个单词里有几个字母？从字节到 token 的全过程。',
+      tags:['BPE','分词','编码']
+    }
+  ];
+
+  const entriesEl = document.getElementById('entries');
+  const searchEl  = document.getElementById('search');
+  const clearBtn  = document.getElementById('clearBtn');
+  const tagRow    = document.getElementById('tagRow');
+  const countLbl  = document.getElementById('countLbl');
+  const noResults = document.getElementById('noResults');
+  const activeTags = new Set();
+
+  const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // ── render the entry cards from POSTS ──
+  function entryMarkup(p){
+    const tags = p.tags.map(t=>`<span data-tag="${esc(t)}">${esc(t)}</span>`).join('');
+    if(p.status==='soon'){
+      return `<div class="entry soon">
+        <div class="e-no">${esc(p.no)}</div>
+        <div class="e-main">
+          <h2 class="e-title">${esc(p.title)}</h2>
+          <p class="e-dek">${esc(p.dek)}</p>
+          <div class="e-tags">${tags}</div>
+        </div>
+        <div class="soon-tag">即将刊出</div>
+      </div>`;
+    }
+    const star = p.featured ? `<span class="e-star">★ 精选</span>` : '';
+    const foot = (p.meta||[]).map(m=>`<span>${esc(m)}</span>`).join('<span class="sep">·</span>');
+    return `<a class="entry" href="${esc(p.slug)}">
+      <div class="e-no">${esc(p.no)}</div>
+      <div class="e-main">
+        <div class="e-top"><span class="e-kicker">${esc(p.kicker||'')}</span>${star}</div>
+        <h2 class="e-title">${esc(p.title)}</h2>
+        <p class="e-dek">${esc(p.dek)}</p>
+        <div class="e-tags">${tags}</div>
+        <div class="e-foot">${foot}</div>
+      </div>
+      <div class="e-go">阅读 <span class="arr">→</span></div>
+    </a>`;
+  }
+
+  POSTS.forEach((p,i)=>{
+    const tmp=document.createElement('div');
+    tmp.innerHTML=entryMarkup(p).trim();
+    const el=tmp.firstElementChild;
+    el.style.animationDelay=(0.9+i*0.08)+'s';
+    el.dataset.search=(p.title+' '+p.dek+' '+p.tags.join(' ')).toLowerCase();
+    el.dataset.tags=p.tags.join('|');
+    entriesEl.appendChild(el);
+  });
+
+  // published count → masthead
+  document.getElementById('pubCount').textContent =
+    String(POSTS.filter(p=>p.status==='published').length).padStart(2,'0');
+
+  // ── build the tag filter row (unique tags, in first-seen order) ──
+  const allTags=[];
+  POSTS.forEach(p=>p.tags.forEach(t=>{ if(!allTags.includes(t)) allTags.push(t); }));
+  allTags.forEach(t=>{
+    const c=document.createElement('button');
+    c.className='tagchip'; c.dataset.tag=t; c.textContent=t;
+    tagRow.appendChild(c);
+  });
+
+  // ── filtering ──
+  const entryEls=Array.from(entriesEl.children);
+  function applyFilter(){
+    const q=searchEl.value.trim().toLowerCase();
+    clearBtn.hidden=!q;
+    let visible=0;
+    entryEls.forEach(el=>{
+      const matchText=!q || el.dataset.search.includes(q);
+      const tags=el.dataset.tags.split('|');
+      const matchTag=activeTags.size===0 || tags.some(t=>activeTags.has(t));
+      const show=matchText && matchTag;
+      el.style.display=show?'':'none';
+      if(show) visible++;
+    });
+    // sync active state on every tag pill (toolbar + inside entries)
+    document.querySelectorAll('[data-tag]').forEach(elm=>{
+      elm.classList.toggle('on', activeTags.has(elm.dataset.tag));
+    });
+    countLbl.innerHTML = activeTags.size||q
+      ? `<b>${visible}</b> / ${POSTS.length} 篇`
+      : `${POSTS.length} 篇`;
+    noResults.hidden = visible>0;
+  }
+
+  function toggleTag(t){ activeTags.has(t)?activeTags.delete(t):activeTags.add(t); applyFilter(); }
+
+  // tag clicks — from the toolbar row and from inside entry cards
+  document.addEventListener('click',e=>{
+    const pill=e.target.closest('[data-tag]');
+    if(!pill) return;
+    if(pill.closest('a.entry')){ e.preventDefault(); }  // don't navigate when filtering
+    toggleTag(pill.dataset.tag);
+  });
+
+  searchEl.addEventListener('input',applyFilter);
+  clearBtn.addEventListener('click',()=>{ searchEl.value=''; searchEl.focus(); applyFilter(); });
+  // Esc clears the search box
+  searchEl.addEventListener('keydown',e=>{ if(e.key==='Escape'){ searchEl.value=''; applyFilter(); } });
+
+  applyFilter();
+</script>
+</body>
+</html>

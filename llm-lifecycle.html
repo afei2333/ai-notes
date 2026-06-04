@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>从数据到回答 · 大模型全流程</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0e10;
+    --bg-soft:#131417;
+    --ink:#ebe6da;
+    --ink-dim:#9a948a;
+    --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09);
+    --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018);
+    --chip-bg:rgba(255,255,255,0.02);
+    --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05;
+    --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+
+  [data-theme="light"]{
+    --bg:#f4f0e7;
+    --bg-soft:#eae4d6;
+    --ink:#22201a;
+    --ink-dim:#6a645a;
+    --ink-faint:#a8a191;
+    --accent:#b8512c;
+    --accent-soft:#c4744d;
+    --sage:#5d7466;
+    --line:rgba(34,32,26,0.12);
+    --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022);
+    --chip-bg:rgba(34,32,26,0.025);
+    --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035;
+    --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-weight:300;
+    line-height:1.8;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    transition:background .6s ease,color .6s ease;
+  }
+
+  /* ── atmosphere ────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),
+      radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%);
+  }
+  .grain{
+    position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .grid-lines{
+    position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px);
+    background-size:100% 4.5rem;
+    -webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);
+            mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);
+  }
+
+  /* ── top bar ───────────────────────────────── */
+  .topbar{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:1.1rem clamp(1.2rem,4vw,3rem);
+    backdrop-filter:blur(10px);
+    background:linear-gradient(var(--bg),var(--bg-fade));
+    border-bottom:1px solid var(--line);
+    transition:background .6s ease,border-color .6s ease;
+  }
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{
+    flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;
+    color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;
+    border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1);
+  }
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .progress-wrap{display:flex;align-items:center;gap:0.9rem}
+  .progress-num{font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.1em}
+  .progress-num b{color:var(--accent);font-weight:500}
+  .progress-track{width:clamp(60px,12vw,140px);height:1px;background:var(--line-strong);position:relative}
+  .progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .9s cubic-bezier(.16,1,.3,1)}
+
+  /* ── side rail ─────────────────────────────── */
+  .rail{
+    position:fixed;left:clamp(1rem,2.5vw,2rem);top:50%;transform:translateY(-50%);
+    z-index:40;display:flex;flex-direction:column;gap:0.85rem;opacity:0;transition:opacity .6s;
+  }
+  .rail.show{opacity:1}
+  .rail button{
+    background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;
+    font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.08em;
+    transition:color .4s;padding:0;
+  }
+  .rail .dot{width:6px;height:6px;border-radius:50%;border:1px solid var(--ink-faint);transition:all .4s;flex:none}
+  .rail button .lbl{opacity:0;transform:translateX(-4px);transition:all .4s;white-space:nowrap}
+  .rail button:hover .lbl{opacity:1;transform:none}
+  .rail button.active{color:var(--accent)}
+  .rail button.active .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 4px rgba(200,100,60,0.12)}
+  .rail button.done .dot{border-color:var(--ink-dim);background:var(--ink-dim)}
+  @media(max-width:1024px){.rail{display:none}}
+
+  /* ── layout shell ──────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1040px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+
+  /* ── hero ──────────────────────────────────── */
+  .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{
+    font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards;
+  }
+  .hero h1{
+    font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;
+    font-size:clamp(2.8rem,8vw,6.2rem);
+  }
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}
+  .hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{
+    max-width:44ch;margin-top:2.4rem;color:var(--ink);font-size:1.2rem;font-weight:400;line-height:1.9;
+    opacity:0;animation:rise 1s .5s forwards;
+  }
+  .hero .meta{
+    display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:3.2rem;
+    opacity:0;animation:rise 1s .65s forwards;
+  }
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0}
+  .start-btn{
+    margin-top:3.6rem;align-self:flex-start;cursor:pointer;
+    background:none;border:1px solid var(--line-strong);color:var(--ink);
+    font-family:var(--mono);font-size:0.78rem;letter-spacing:0.18em;text-transform:uppercase;
+    padding:1.05rem 2.2rem;border-radius:2rem;display:flex;align-items:center;gap:0.9rem;
+    transition:all .5s cubic-bezier(.16,1,.3,1);opacity:0;animation:rise 1s .8s forwards;
+  }
+  .start-btn:hover{border-color:var(--accent);color:var(--accent);gap:1.4rem;padding-right:2.6rem}
+  .start-btn .arc{width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center;font-size:0.8rem;transition:transform .5s}
+  .start-btn:hover .arc{transform:rotate(90deg)}
+
+  /* ── flow / stages ─────────────────────────── */
+  .flow{position:relative;padding-bottom:6rem}
+  .spine{
+    position:absolute;left:clamp(14px,3.5vw,38px);top:0;bottom:0;width:1px;background:var(--line);
+  }
+  .spine .lit{position:absolute;inset:0 auto auto 0;width:1px;height:0;background:linear-gradient(var(--accent),var(--sage));transition:height 1s cubic-bezier(.16,1,.3,1)}
+  @media(max-width:680px){.spine{display:none}}
+
+  .stage{
+    position:relative;
+    padding:clamp(2.5rem,6vw,5rem) 0 clamp(2.5rem,6vw,5rem) clamp(48px,9vw,110px);
+    border-bottom:1px solid var(--line);
+    scroll-margin-top:78px;
+  }
+  @media(max-width:680px){.stage{padding-left:0}}
+  .stage[hidden]{display:none}
+  .stage.in .reveal{opacity:1;transform:none}
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.12s}.reveal.d2{transition-delay:.24s}.reveal.d3{transition-delay:.36s}.reveal.d4{transition-delay:.48s}
+
+  .stage .node{
+    position:absolute;left:clamp(8px,3.5vw,32px);top:clamp(2.7rem,6vw,5.2rem);
+    width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-faint);
+    transition:all .6s;
+  }
+  .stage.in .node{border-color:var(--accent);box-shadow:0 0 0 5px rgba(200,100,60,0.1)}
+  .stage.in .node::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+  @media(max-width:680px){.stage .node{display:none}}
+
+  .stage-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .stage-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .stage-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .stage-phase{
+    margin-left:auto;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--ink-faint);border:1px solid var(--line);padding:0.3rem 0.7rem;border-radius:1rem;
+  }
+  .stage-phase.user{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .stage h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.8rem,4.4vw,3rem);line-height:1.1;letter-spacing:-0.01em}
+  .stage .desc{max-width:50ch;margin-top:1.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.95}
+  .stage .desc b{color:var(--accent-soft);font-weight:500}
+
+  /* viz frame */
+  .viz{
+    margin-top:2.4rem;background:linear-gradient(180deg,var(--viz-grad),transparent);
+    border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.2rem);
+    position:relative;overflow:hidden;
+  }
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+
+  /* chips / sources */
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .chip{
+    font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);
+    border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;
+    background:var(--chip-bg);transition:all .4s;
+  }
+  .stage.in .chip{animation:pop .6s backwards}
+  .chip.tok{color:var(--accent-soft);border-color:rgba(224,160,127,0.3)}
+  .chip .id{color:var(--ink-faint);margin-left:0.5rem}
+
+  /* funnel */
+  .funnel{display:flex;flex-direction:column;align-items:center;gap:0.4rem}
+  .funnel .row{display:flex;gap:0.35rem;justify-content:center}
+  .funnel .b{height:14px;border-radius:2px;background:var(--line-strong)}
+  .funnel .b.keep{background:var(--accent)}
+  .funnel .arrow{color:var(--ink-faint);font-size:0.8rem}
+
+  /* token flow */
+  .tokenflow{display:flex;flex-direction:column;gap:1.1rem}
+  .tokenflow .line{display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center}
+  .word{font-family:var(--serif);font-size:1.15rem;color:var(--ink)}
+  .sep{color:var(--ink-faint);font-family:var(--mono);font-size:0.7rem}
+
+  /* transformer grid */
+  .layers{display:flex;flex-direction:column;gap:0.4rem}
+  .layer{display:flex;gap:0.4rem;align-items:center}
+  .layer .name{font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);width:62px;flex:none;letter-spacing:0.08em}
+  .layer .cells{display:flex;gap:0.3rem;flex-wrap:wrap}
+  .cell{width:14px;height:14px;border-radius:3px;background:var(--line-strong)}
+  .stage.in .cell{animation:flick 2.6s infinite}
+
+  /* probability bars */
+  .probs{display:flex;flex-direction:column;gap:0.55rem;margin-top:1.4rem}
+  .prob{display:flex;align-items:center;gap:0.9rem}
+  .prob .t{font-family:var(--mono);font-size:0.78rem;width:90px;flex:none;color:var(--ink)}
+  .prob .bar{flex:1;height:6px;background:var(--line-strong);border-radius:3px;position:relative;overflow:hidden}
+  .prob .bar i{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-soft));border-radius:3px;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+  .stage.in .prob .bar i{width:var(--w)}
+  .prob .pct{font-family:var(--mono);font-size:0.7rem;color:var(--ink-faint);width:44px;text-align:right;flex:none}
+
+  /* pairs (SFT) */
+  .pairs{display:flex;flex-direction:column;gap:0.9rem}
+  .pair{display:grid;grid-template-columns:auto 1fr;gap:0.9rem;align-items:start}
+  .pair .tag{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.25rem 0.55rem;border-radius:0.4rem;flex:none;margin-top:0.15rem}
+  .pair .tag.q{color:var(--sage);border:1px solid rgba(127,145,131,0.35)}
+  .pair .tag.a{color:var(--accent);border:1px solid rgba(200,100,60,0.35)}
+  .pair p{color:var(--ink);font-size:1.02rem;line-height:1.75}
+
+  /* ranked answers */
+  .ranked{display:flex;flex-direction:column;gap:0.6rem}
+  .rk{display:flex;align-items:center;gap:0.9rem;border:1px solid var(--line);border-radius:0.6rem;padding:0.7rem 1rem;transition:all .5s}
+  .rk .score{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);width:36px;flex:none}
+  .rk .txt{color:var(--ink);font-size:1rem;flex:1}
+  .rk.best{border-color:rgba(200,100,60,0.4);background:rgba(200,100,60,0.05)}
+  .rk.best .score{color:var(--accent)}
+  .rk.best .crown{color:var(--accent);font-family:var(--mono);font-size:0.6rem;letter-spacing:0.12em}
+
+  /* servers */
+  .nodes{display:flex;gap:0.5rem;flex-wrap:wrap}
+  .srv{width:46px;height:54px;border:1px solid var(--line-strong);border-radius:6px;display:flex;flex-direction:column;justify-content:space-around;padding:6px;background:var(--chip-bg)}
+  .srv span{height:3px;border-radius:2px;background:var(--line-strong)}
+  .stage.in .srv span{animation:blink 1.8s infinite}
+  .srv span:nth-child(2){animation-delay:.3s}.srv span:nth-child(3){animation-delay:.6s}
+
+  /* prompt box */
+  .promptbox{border:1px solid var(--line-strong);border-radius:10px;background:var(--box-bg)}
+  .promptbox .bar{display:flex;align-items:center;gap:0.5rem;padding:0.7rem 1rem;border-bottom:1px solid var(--line)}
+  .promptbox .bar i{width:9px;height:9px;border-radius:50%;background:var(--ink-faint)}
+  .promptbox .bar .who{margin-left:auto;font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);letter-spacing:0.14em}
+  .promptbox .body{padding:1.2rem 1rem;font-family:var(--serif);font-size:1.1rem;color:var(--ink);min-height:2.4em}
+  .caret{display:inline-block;width:8px;height:1.1em;background:var(--accent);margin-left:2px;vertical-align:text-bottom;animation:caret 1s steps(2) infinite}
+
+  /* attention heatmap */
+  .attn{display:grid;gap:3px;width:fit-content}
+  .attn .c{width:22px;height:22px;border-radius:3px;background:var(--line-strong)}
+  .attn-axis{font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);display:flex;gap:3px;margin-top:6px}
+  .attn-axis span{width:22px;text-align:center}
+
+  /* output stream */
+  .output{font-family:var(--serif);font-size:1.15rem;line-height:2;color:var(--ink);min-height:3em}
+  .output .tk{opacity:0}
+
+  /* finale */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5;opacity:0;transition:opacity 1s}
+  .finale.show{opacity:1}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.6rem,4vw,2.6rem);line-height:1.4;max-width:24ch;margin:0 auto;color:var(--ink)}
+  .replay{margin-top:3rem;cursor:pointer;background:none;border:none;color:var(--ink-dim);font-family:var(--mono);font-size:0.72rem;letter-spacing:0.16em;text-transform:uppercase;transition:color .4s;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .replay:hover{color:var(--accent)}
+
+  /* autoplay toggle (in topbar reuse) */
+  .auto-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:1rem;transition:all .4s}
+  .auto-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auto-btn.on{border-color:var(--sage);color:var(--sage)}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── pre-training extras ───────────────────── */
+  /* masked next-token prompt */
+  .maskline{display:flex;align-items:center;gap:0.6rem;justify-content:center;margin-bottom:1.5rem;flex-wrap:wrap}
+  .maskline .mctx{font-family:var(--serif);font-size:1.3rem;color:var(--ink)}
+  .maskline .mblank{font-family:var(--serif);font-size:1.3rem;color:var(--accent);border-bottom:2px dashed var(--accent);min-width:2.6em;text-align:center;padding-bottom:2px}
+  .maskline .mq{font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.1em;margin-left:0.4rem}
+
+  /* training loop steps */
+  .steps{display:flex;flex-direction:column;gap:0}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.55rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.72rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);width:27px;height:27px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1.02rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.7rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc span{display:block;color:var(--ink-dim);font-size:0.94rem;margin-top:0.2rem;line-height:1.7}
+  .step:not(:last-child)::before{content:"";position:absolute;left:13px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+  .loop-note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.04em;line-height:1.8}
+  .loop-note b{color:var(--accent-soft);font-weight:500}
+
+  /* fact cards */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0.8rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.65rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.08em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+
+  /* learned-capability tags */
+  .learns{display:flex;flex-wrap:wrap;gap:0.55rem;margin-top:0.4rem}
+  .learn{font-family:var(--sans);font-size:0.86rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.45rem 0.85rem;background:var(--chip-bg)}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.45rem;font-family:var(--mono);font-size:0.72rem}
+
+  /* loss curve */
+  .losscurve{width:100%;height:150px;display:block}
+  .losscurve .axis{stroke:var(--line-strong);stroke-width:1}
+  .losscurve .grid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4}
+  .losscurve .area{fill:url(#lossgrad)}
+  .losscurve .curve{fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-dasharray:640;stroke-dashoffset:640}
+  .stage.in .losscurve .curve{animation:draw 2.4s .3s cubic-bezier(.16,1,.3,1) forwards}
+  .losscurve .dot{fill:var(--accent);opacity:0}
+  .stage.in .losscurve .dot{animation:dotpop .5s 2.5s forwards}
+  .loss-lbl{font-family:var(--mono);font-size:0.6rem;fill:var(--ink-faint);letter-spacing:0.06em}
+
+  /* keyframes */
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes dotpop{to{opacity:1}}
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes flick{0%,100%{background:var(--line-strong)}45%{background:var(--accent)}55%{background:var(--sage)}}
+  @keyframes blink{0%,100%{background:var(--line-strong)}50%{background:var(--sage)}}
+  @keyframes caret{0%,100%{opacity:1}50%{opacity:0}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">大模型 · <b>从数据到回答</b></div>
+    </div>
+    <div class="progress-wrap">
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="auto-btn" id="autoBtn">自动播放</button>
+      <div class="progress-num"><b id="pNum">00</b> / 11</div>
+      <div class="progress-track"><div class="progress-fill" id="pFill"></div></div>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail"></nav>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="kicker">A Field Guide · 大语言模型的一生</div>
+      <h1>
+        <span class="l">万亿字节，</span>
+        <span class="l">凝成<em>一句回答</em>。</span>
+      </h1>
+      <p class="sub">从散落于互联网的原始文本，到此刻屏幕上流淌而出的文字——一个大语言模型要经历训练、对齐与推理的漫长旅程。让我们一阶段、一阶段地走完它。</p>
+      <div class="meta">
+        <div><b>11</b>阶段全流程</div>
+        <div><b>10¹²</b>级 token 语料</div>
+        <div><b>10⁹⁺</b>可学习参数</div>
+      </div>
+      <button class="start-btn" id="startBtn">
+        开始旅程
+        <span class="arc">↓</span>
+      </button>
+    </section>
+
+    <!-- FLOW -->
+    <section class="flow" id="flow">
+      <div class="spine"><div class="lit" id="lit"></div></div>
+
+      <!-- 01 -->
+      <article class="stage" data-phase="训练 · 数据" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal">
+          <span class="stage-no">01</span>
+          <span class="stage-en">Data Collection</span>
+          <span class="stage-phase">训练阶段</span>
+        </div>
+        <h2 class="reveal d1">汇聚世界的文本</h2>
+        <p class="desc reveal d1">模型的认知，始于阅读。工程师从公开网页、书籍、代码仓库、百科与论坛中收集<b>海量文本</b>，构成原始语料。规模常达数万亿 token——相当于一个人不眠不休读上数千年。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">来源构成 / Sources</div>
+          <div class="chips">
+            <span class="chip" style="animation-delay:.05s">网页 Web</span>
+            <span class="chip" style="animation-delay:.12s">书籍 Books</span>
+            <span class="chip" style="animation-delay:.19s">代码 Code</span>
+            <span class="chip" style="animation-delay:.26s">百科 Wiki</span>
+            <span class="chip" style="animation-delay:.33s">论坛 Forums</span>
+            <span class="chip" style="animation-delay:.40s">学术 Papers</span>
+            <span class="chip" style="animation-delay:.47s">对话 Dialogue</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- 02 -->
+      <article class="stage" data-phase="训练 · 清洗" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">Cleaning & Dedup</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">去芜存菁</h2>
+        <p class="desc reveal d1">原始语料噪声极多。系统过滤垃圾内容、<b>去除重复</b>、剔除隐私与有害信息，并按质量对文本加权。一条朴素的真理在此显现：<b>数据质量，决定模型的上限</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">质量过滤 / 原始 → 保留</div>
+          <div class="funnel" id="funnel"></div>
+        </div>
+      </article>
+
+      <!-- 03 -->
+      <article class="stage" data-phase="训练 · 分词" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">Tokenization</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">把文字变成数字</h2>
+        <p class="desc reveal d1">模型不认识文字，只认识数字。分词器把文本切成 <b>token</b>——介于字与词之间的最小单元，再为每个 token 分配一个整数 ID。自此，语言成为一串可计算的序列。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">分词示例 / Text → Tokens → IDs</div>
+          <div class="tokenflow">
+            <div class="line"><span class="word">人工智能正在改变世界</span></div>
+            <div class="line"><span class="sep">↓</span></div>
+            <div class="line">
+              <span class="chip tok">人工<span class="id">8021</span></span>
+              <span class="chip tok">智能<span class="id">4573</span></span>
+              <span class="chip tok">正在<span class="id">901</span></span>
+              <span class="chip tok">改变<span class="id">6612</span></span>
+              <span class="chip tok">世界<span class="id">288</span></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 04 -->
+      <article class="stage" data-phase="训练 · 预训练" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Pre-training</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">预测下一个词</h2>
+        <p class="desc reveal d1">这是整段旅程中<b>最昂贵、最核心</b>的一步。在数千张 GPU 上，模型日夜不停地重复一件朴素到极致的事：给定一段上文，<b>预测下一个 token</b>。没有人雇佣标注员——文本自己就是答案，被遮住的下一个词，就是标准答案。这种<b>「自监督」</b>方式，让模型得以吞下几乎整个互联网。</p>
+        <p class="desc reveal d1" style="margin-top:1.1rem">关键在于：模型一开始什么都不会，预测纯属乱猜。但每猜一次，系统就量化它错得有多离谱，再据此把数十亿个参数各自向「更对一点」的方向挪动一丝。亿万次这样的微调累积起来，<b>语法、事实、推理与世界常识便被悄然压缩进权重之中</b>。</p>
+
+        <!-- A. self-supervised objective -->
+        <div class="viz reveal d2">
+          <div class="viz-cap">训练目标 / 自监督 · 完形填空</div>
+          <div class="maskline">
+            <span class="mctx">人工智能正在改变</span>
+            <span class="mblank" id="maskBlank">？</span>
+            <span class="mq">← 模型要猜的下一个 token</span>
+          </div>
+          <div class="layers" id="layers"></div>
+          <div class="probs">
+            <div class="prob"><span class="t">"世界"</span><span class="bar"><i style="--w:71%"></i></span><span class="pct">0.71</span></div>
+            <div class="prob"><span class="t">"生活"</span><span class="bar"><i style="--w:18%"></i></span><span class="pct">0.18</span></div>
+            <div class="prob"><span class="t">"一切"</span><span class="bar"><i style="--w:6%"></i></span><span class="pct">0.06</span></div>
+          </div>
+          <div class="loop-note">真实文本里的下一个词是 <b>「世界」</b>。模型给它的概率越高，损失越小；猜偏了，损失就大——这个差距，驱动着整场学习。</div>
+        </div>
+
+        <!-- B. the training loop -->
+        <div class="viz reveal d3">
+          <div class="viz-cap">训练循环 / 每一步迭代都做这四件事</div>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div class="sc"><b>前向传播<em>Forward</em></b><span>把上文送进网络，经过几十层 Transformer，输出对下一个 token 的概率分布。</span></div></div>
+            <div class="step"><span class="si">2</span><div class="sc"><b>计算损失<em>Cross-Entropy Loss</em></b><span>用交叉熵衡量「预测分布」与「真实答案」的差距，得到一个数字——错得越多，它越大。</span></div></div>
+            <div class="step"><span class="si">3</span><div class="sc"><b>反向传播<em>Backprop</em></b><span>沿网络从后往前回溯，算出每一个参数对这次误差「负有多少责任」，即梯度。</span></div></div>
+            <div class="step"><span class="si">4</span><div class="sc"><b>梯度下降<em>Optimizer</em></b><span>优化器（如 AdamW）按梯度方向，把每个参数都微调一点点，让下次预测更准。</span></div></div>
+          </div>
+          <div class="loop-note">四步合为一次 <b>step</b>。成千上万条序列打包成一个 batch 同时计算，再重复 <b>亿万次</b>——这就是预训练的全部。</div>
+        </div>
+
+        <!-- C. loss curve + scale -->
+        <div class="viz reveal d3">
+          <div class="viz-cap">损失下降 / 模型在变聪明</div>
+          <svg class="losscurve" viewBox="0 0 300 150" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="lossgrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="var(--accent)" stop-opacity="0.22"/>
+                <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <line class="grid" x1="14" y1="40" x2="290" y2="40"/>
+            <line class="grid" x1="14" y1="80" x2="290" y2="80"/>
+            <line class="axis" x1="14" y1="12" x2="14" y2="128"/>
+            <line class="axis" x1="14" y1="128" x2="290" y2="128"/>
+            <path class="area" d="M14,28 C40,62 60,90 90,104 C130,120 175,124 220,126 C250,127 272,127 290,127 L290,128 L14,128 Z"/>
+            <path class="curve" d="M14,28 C40,62 60,90 90,104 C130,120 175,124 220,126 C250,127 272,127 290,127"/>
+            <circle class="dot" cx="290" cy="127" r="3.5"/>
+            <text class="loss-lbl" x="18" y="22">高损失</text>
+            <text class="loss-lbl" x="244" y="122">低损失</text>
+            <text class="loss-lbl" x="150" y="146" text-anchor="middle">训练步数 / Tokens 见过的越多 →</text>
+          </svg>
+          <div class="facts" style="margin-top:1.2rem">
+            <div class="fact"><b>10¹²＋</b><span>训练 Token 数</span></div>
+            <div class="fact"><b>10³</b><span>GPU 数量级</span></div>
+            <div class="fact"><b>数周–数月</b><span>持续训练时长</span></div>
+            <div class="fact"><b>10⁶＋</b><span>美元级算力成本</span></div>
+          </div>
+        </div>
+
+        <!-- D. what it learns -->
+        <div class="viz reveal d3">
+          <div class="viz-cap">权重里压进了什么 / Emergent Knowledge</div>
+          <div class="learns">
+            <span class="learn"><i>语法</i>主谓宾、时态、标点</span>
+            <span class="learn"><i>事实</i>巴黎是法国首都</span>
+            <span class="learn"><i>推理</i>由前提推出结论</span>
+            <span class="learn"><i>代码</i>函数与语法结构</span>
+            <span class="learn"><i>常识</i>水往低处流</span>
+            <span class="learn"><i>多语言</i>跨语种对应关系</span>
+          </div>
+          <div class="loop-note">此刻得到的，是一个<b>「基座模型」（Base Model）</b>：博览群书、续写能力极强，却还不懂得如何听从指令、好好对话——那是下一阶段的事。</div>
+        </div>
+
+      </article>
+
+      <!-- 05 -->
+      <article class="stage" data-phase="训练 · 微调" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">Supervised Fine-Tuning</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">学会听懂指令</h2>
+        <p class="desc reveal d1">预训练后的模型博学却不善对话。研究者用人工编写的<b>「指令—回答」示范</b>继续训练，让它学会理解你的意图，并以有条理、对话式的方式回应。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">示范数据 / Instruction → Response</div>
+          <div class="pairs">
+            <div class="pair"><span class="tag q">指令</span><p>用一句话解释什么是黑洞。</p></div>
+            <div class="pair"><span class="tag a">回答</span><p>黑洞是引力极强的天体，连光都无法从中逃逸。</p></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 06 -->
+      <article class="stage" data-phase="训练 · 对齐" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">RLHF · Alignment</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">向人类的偏好对齐</h2>
+        <p class="desc reveal d1">人们对模型的多个候选回答<b>排序打分</b>，由此训练出一个「奖励模型」；再用强化学习优化策略，让回答更<b>有用、诚实、无害</b>。这一步，赋予模型以分寸感。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">候选回答排序 / Reward Ranking</div>
+          <div class="ranked">
+            <div class="rk best"><span class="score">+9.2</span><span class="txt">耐心、准确、给出可执行的步骤</span><span class="crown">★ 偏好</span></div>
+            <div class="rk"><span class="score">+5.1</span><span class="txt">正确但略显笼统</span></div>
+            <div class="rk"><span class="score">−3.4</span><span class="txt">含糊、回避问题</span></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 07 -->
+      <article class="stage" data-phase="训练 · 部署" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Deployment</span><span class="stage-phase">训练阶段</span></div>
+        <h2 class="reveal d1">部署到推理集群</h2>
+        <p class="desc reveal d1">训练好的权重被部署到推理服务器。通过<b>量化压缩</b>、KV 缓存与批处理调度，模型得以低延迟地同时回应海量并发请求。它，终于准备好与你对话。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">推理集群 / Inference Cluster</div>
+          <div class="nodes" id="nodes"></div>
+        </div>
+      </article>
+
+      <!-- 08 -->
+      <article class="stage" data-phase="用户 · 输入" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">Your Prompt</span><span class="stage-phase user">用户阶段</span></div>
+        <h2 class="reveal d1">你，输入提示词</h2>
+        <p class="desc reveal d1">你敲下一句话。它会和<b>系统提示词</b>、历史对话一起，被同样地分词、拼接，组成模型这一轮能「看见」的全部内容——也就是<b>上下文窗口</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">输入 / Prompt</div>
+          <div class="promptbox">
+            <div class="bar"><i></i><i></i><i></i><span class="who">User · 上下文窗口</span></div>
+            <div class="body"><span id="promptType"></span><span class="caret"></span></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 09 -->
+      <article class="stage" data-phase="用户 · 计算" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Attention</span><span class="stage-phase user">用户阶段</span></div>
+        <h2 class="reveal d1">注意力，读懂语义</h2>
+        <p class="desc reveal d1">模型读入全部上下文 token。在每一层里，<b>注意力机制</b>反复权衡每个词与其他词的关系——哪些该被关注，哪些可被忽略——从而构建出对你这句话的内部理解。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">注意力权重 / Attention Map</div>
+          <div class="attn" id="attn"></div>
+          <div class="attn-axis" id="attnAxis"></div>
+        </div>
+      </article>
+
+      <!-- 10 -->
+      <article class="stage" data-phase="用户 · 生成" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">10</span><span class="stage-en">Autoregressive Decoding</span><span class="stage-phase user">用户阶段</span></div>
+        <h2 class="reveal d1">逐字生成回答</h2>
+        <p class="desc reveal d1">模型一次只预测<b>一个 token</b>：生成它、把它接回输入、再预测下一个，如此循环。采样策略（温度、Top-p）在<b>确定性与创造力</b>之间悄悄取舍。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">采样下一个 token / Sampling</div>
+          <div class="probs">
+            <div class="prob"><span class="t">"它"</span><span class="bar"><i style="--w:64%"></i></span><span class="pct">0.64</span></div>
+            <div class="prob"><span class="t">"模型"</span><span class="bar"><i style="--w:22%"></i></span><span class="pct">0.22</span></div>
+            <div class="prob"><span class="t">"系统"</span><span class="bar"><i style="--w:9%"></i></span><span class="pct">0.09</span></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 11 -->
+      <article class="stage" data-phase="用户 · 输出" hidden>
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">11</span><span class="stage-en">The Answer</span><span class="stage-phase user">用户阶段</span></div>
+        <h2 class="reveal d1">回答，浮现于眼前</h2>
+        <p class="desc reveal d1">生成的 token 被还原成文字，<b>流式</b>呈现在你面前。一句轻描淡写的提问，历经万亿参数的运算，化作此刻这段回答。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">流式输出 / Streaming Output</div>
+          <div class="output" id="outputStream"></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Journey</div>
+      <h3>从万亿字节的喧嚣，到此刻这一句安静的回答。</h3>
+      <button class="replay" id="replayBtn">↺ 重新走一遍</button>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // theme toggle (persisted)
+  const themeBtn = document.getElementById('themeBtn');
+  const saved = localStorage.getItem('llm-theme');
+  if(saved==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight = document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){ document.documentElement.removeAttribute('data-theme'); localStorage.setItem('llm-theme','dark'); }
+    else { document.documentElement.setAttribute('data-theme','light'); localStorage.setItem('llm-theme','light'); }
+  });
+
+  const stages = Array.from(document.querySelectorAll('.stage'));
+  const rail = document.getElementById('rail');
+  const pNum = document.getElementById('pNum');
+  const pFill = document.getElementById('pFill');
+  const lit = document.getElementById('lit');
+  const startBtn = document.getElementById('startBtn');
+  const autoBtn = document.getElementById('autoBtn');
+  const finale = document.getElementById('finale');
+  const replayBtn = document.getElementById('replayBtn');
+  let current = -1;
+  let auto = false;
+  let autoTimer = null;
+  const railLabels = ['采集','清洗','分词','预训练','微调','对齐','部署','输入','注意力','生成','输出'];
+
+  // navigation is now scroll-driven — every stage lives in the flow from the start,
+  // and is revealed as it scrolls into view (no manual "advance" buttons)
+  stages.forEach(s=>{ s.hidden=false; });
+
+  // build side rail
+  railLabels.forEach((lbl,i)=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="dot"></span><span class="lbl">${String(i+1).padStart(2,'0')} ${lbl}</span>`;
+    b.addEventListener('click',()=>{ stages[i].scrollIntoView({behavior:'smooth',block:'start'}); });
+    rail.appendChild(b);
+  });
+  const railBtns = Array.from(rail.children);
+
+  function updateProgress(){
+    const n = current+1;
+    pNum.textContent = String(n).padStart(2,'0');
+    pFill.style.width = (n/stages.length*100)+'%';
+    lit.style.height = (n/stages.length*100)+'%';
+    railBtns.forEach((b,i)=>{
+      b.classList.toggle('active', i===current);
+      b.classList.toggle('done', i<current);
+    });
+  }
+
+  // reveal each stage (and fire its one-time effect) the moment it scrolls into view
+  const revealObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting && !e.target.classList.contains('in')){
+        e.target.classList.add('in');
+        runStageEffect(stages.indexOf(e.target));
+      }
+    });
+  }, {threshold:0, rootMargin:'0px 0px -20% 0px'});
+  stages.forEach(s=>revealObserver.observe(s));
+
+  // reveal the finale when the reader reaches the bottom
+  new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) finale.classList.add('show'); });
+  }, {threshold:0.3}).observe(finale);
+
+  // track which stage is "current" (for progress bar + side rail) from scroll position
+  let ticking=false;
+  function onScroll(){
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const line = window.innerHeight*0.45;
+      let idx=-1;
+      stages.forEach((s,i)=>{ if(s.getBoundingClientRect().top <= line) idx=i; });
+      if(idx!==current){ current=idx; updateProgress(); }
+      if(current>=0) rail.classList.add('show');
+      ticking=false;
+    });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+
+  // hero button simply glides the reader down into the journey
+  startBtn.addEventListener('click',()=>{
+    rail.classList.add('show');
+    stages[0].scrollIntoView({behavior:'smooth',block:'start'});
+  });
+
+  // autoplay = hands-free auto-scroll through the stages
+  function autoTick(){
+    if(!auto) return;
+    const next = current+1;
+    if(next>=stages.length){ finale.scrollIntoView({behavior:'smooth',block:'center'}); stopAuto(); return; }
+    stages[next].scrollIntoView({behavior:'smooth',block:'start'});
+    autoTimer=setTimeout(autoTick, 4200);
+  }
+  function stopAuto(){ auto=false; autoBtn.classList.remove('on'); autoBtn.textContent='自动播放'; if(autoTimer)clearTimeout(autoTimer); }
+  autoBtn.addEventListener('click',()=>{
+    if(auto){ stopAuto(); return; }
+    auto=true; autoBtn.classList.add('on'); autoBtn.textContent='■ 停止';
+    rail.classList.add('show');
+    autoTick();
+  });
+
+  replayBtn.addEventListener('click',()=>{
+    stopAuto();
+    stages.forEach(s=>s.classList.remove('in'));
+    finale.classList.remove('show');
+    current=-1; updateProgress();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  // ── build dynamic viz once ──
+  // funnel
+  (function(){
+    const f=document.getElementById('funnel');
+    const rows=[18,14,10,6,3];
+    rows.forEach((cnt,r)=>{
+      const row=document.createElement('div');row.className='row';
+      for(let k=0;k<cnt;k++){
+        const b=document.createElement('div');b.className='b';
+        b.style.width=(8+Math.random()*16)+'px';
+        if(r===rows.length-1) b.classList.add('keep');
+        row.appendChild(b);
+      }
+      f.appendChild(row);
+      if(r<rows.length-1){const ar=document.createElement('div');ar.className='arrow';ar.textContent='↓';f.appendChild(ar);}
+    });
+  })();
+  // transformer layers
+  (function(){
+    const L=document.getElementById('layers');
+    const names=['embed','layer 1','layer 2','…','layer N','logits'];
+    names.forEach((nm,li)=>{
+      const row=document.createElement('div');row.className='layer';
+      row.innerHTML=`<span class="name">${nm}</span>`;
+      const cells=document.createElement('div');cells.className='cells';
+      for(let k=0;k<16;k++){const c=document.createElement('div');c.className='cell';c.style.animationDelay=(Math.random()*2.5)+'s';cells.appendChild(c);}
+      row.appendChild(cells);L.appendChild(row);
+    });
+  })();
+  // servers
+  (function(){
+    const n=document.getElementById('nodes');
+    for(let i=0;i<10;i++){const s=document.createElement('div');s.className='srv';s.innerHTML='<span></span><span></span><span></span>';n.appendChild(s);}
+  })();
+  // attention map
+  (function(){
+    const a=document.getElementById('attn');
+    const ax=document.getElementById('attnAxis');
+    const toks=['人工','智能','改变','世界'];
+    const N=toks.length;
+    a.style.gridTemplateColumns=`repeat(${N},22px)`;
+    for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+      const cell=document.createElement('div');cell.className='c';
+      a.appendChild(cell);
+    }
+    toks.forEach(t=>{const sp=document.createElement('span');sp.textContent=t;ax.appendChild(sp);});
+  })();
+
+  // per-stage timed effects
+  const promptText='大语言模型是怎么工作的？';
+  const answerTokens=['它','先','把','文字','切成','token','，','再','逐个','预测','下一个','词','，','流式','拼成','这段','回答','。'];
+  function runStageEffect(i){
+    if(i===4){
+      animateProbs(stages[4]);
+      const mb=document.getElementById('maskBlank');
+      if(mb){ mb.textContent='？'; mb.style.color='var(--accent)'; setTimeout(()=>{ mb.textContent='世界'; },1300); }
+    }
+    if(i===7){ typeText(document.getElementById('promptType'),promptText,55); }
+    if(i===8){ animateAttention(); }
+    if(i===9){ animateProbs(stages[9]); }
+    if(i===10){ streamOutput(); }
+  }
+  function animateProbs(scope){
+    scope.querySelectorAll('.prob .bar i').forEach(el=>{
+      const w=el.style.getPropertyValue('--w');el.style.width='0';
+      setTimeout(()=>{el.style.width=w;},150);
+    });
+  }
+  function typeText(el,txt,sp){
+    el.textContent='';let k=0;
+    (function t(){ if(k<=txt.length){el.textContent=txt.slice(0,k);k++;setTimeout(t,sp);} })();
+  }
+  function animateAttention(){
+    const cells=document.querySelectorAll('#attn .c');
+    cells.forEach((c,idx)=>{
+      const v=Math.random();
+      setTimeout(()=>{
+        const alpha=0.12+v*0.85;
+        c.style.background=`rgba(200,100,60,${alpha.toFixed(2)})`;
+      }, idx*45);
+    });
+  }
+  function streamOutput(){
+    const out=document.getElementById('outputStream');
+    out.innerHTML='';
+    answerTokens.forEach((t,idx)=>{
+      const sp=document.createElement('span');sp.className='tk';sp.textContent=t;out.appendChild(sp);
+      setTimeout(()=>{sp.style.transition='opacity .4s';sp.style.opacity='1';}, idx*150);
+    });
+  }
+
+  updateProgress();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>注意力机制，逐矩阵拆解 · 原理手记</title>
+<meta name="description" content="softmax(QKᵀ/√dₖ)·V 到底在算什么？用一句三个字的话，把一次 self-attention 连数字一起算给你看。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0e10;
+    --bg-soft:#131417;
+    --ink:#ebe6da;
+    --ink-dim:#9a948a;
+    --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09);
+    --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018);
+    --chip-bg:rgba(255,255,255,0.02);
+    --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05;
+    --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+
+  [data-theme="light"]{
+    --bg:#f4f0e7;
+    --bg-soft:#eae4d6;
+    --ink:#22201a;
+    --ink-dim:#6a645a;
+    --ink-faint:#a8a191;
+    --accent:#b8512c;
+    --accent-soft:#c4744d;
+    --sage:#5d7466;
+    --line:rgba(34,32,26,0.12);
+    --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022);
+    --chip-bg:rgba(34,32,26,0.025);
+    --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035;
+    --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-weight:300;
+    line-height:1.8;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    transition:background .6s ease,color .6s ease;
+  }
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),
+      radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%);
+  }
+  .grain{
+    position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .grid-lines{
+    position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px);
+    background-size:100% 4.5rem;
+    -webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);
+            mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);
+  }
+
+  /* ── top bar ───────────────────────────────── */
+  .topbar{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:1.1rem clamp(1.2rem,4vw,3rem);
+    backdrop-filter:blur(10px);
+    background:linear-gradient(var(--bg),var(--bg-fade));
+    border-bottom:1px solid var(--line);
+    transition:background .6s ease,border-color .6s ease;
+  }
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{
+    flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;
+    color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;
+    border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1);
+  }
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .progress-wrap{display:flex;align-items:center;gap:0.9rem}
+  .progress-num{font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.1em}
+  .progress-num b{color:var(--accent);font-weight:500}
+  .progress-track{width:clamp(60px,12vw,140px);height:1px;background:var(--line-strong);position:relative}
+  .progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .9s cubic-bezier(.16,1,.3,1)}
+
+  /* ── side rail ─────────────────────────────── */
+  .rail{
+    position:fixed;left:clamp(1rem,2.5vw,2rem);top:50%;transform:translateY(-50%);
+    z-index:40;display:flex;flex-direction:column;gap:0.85rem;opacity:0;transition:opacity .6s;
+  }
+  .rail.show{opacity:1}
+  .rail button{
+    background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;
+    font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.08em;
+    transition:color .4s;padding:0;
+  }
+  .rail .dot{width:6px;height:6px;border-radius:50%;border:1px solid var(--ink-faint);transition:all .4s;flex:none}
+  .rail button .lbl{opacity:0;transform:translateX(-4px);transition:all .4s;white-space:nowrap}
+  .rail button:hover .lbl{opacity:1;transform:none}
+  .rail button.active{color:var(--accent)}
+  .rail button.active .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 4px rgba(200,100,60,0.12)}
+  .rail button.done .dot{border-color:var(--ink-dim);background:var(--ink-dim)}
+  @media(max-width:1024px){.rail{display:none}}
+
+  /* ── layout shell ──────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1040px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+
+  /* ── hero ──────────────────────────────────── */
+  .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{
+    font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards;
+  }
+  .hero h1{
+    font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;
+    font-size:clamp(2.8rem,8vw,6.2rem);
+  }
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}
+  .hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{
+    max-width:46ch;margin-top:2.4rem;color:var(--ink);font-size:1.2rem;font-weight:400;line-height:1.9;
+    opacity:0;animation:rise 1s .5s forwards;
+  }
+  .hero .sub code{font-family:var(--mono);font-size:0.92em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero .meta{
+    display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:3.2rem;
+    opacity:0;animation:rise 1s .65s forwards;
+  }
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0}
+  .start-btn{
+    margin-top:3.6rem;align-self:flex-start;cursor:pointer;
+    background:none;border:1px solid var(--line-strong);color:var(--ink);
+    font-family:var(--mono);font-size:0.78rem;letter-spacing:0.18em;text-transform:uppercase;
+    padding:1.05rem 2.2rem;border-radius:2rem;display:flex;align-items:center;gap:0.9rem;
+    transition:all .5s cubic-bezier(.16,1,.3,1);opacity:0;animation:rise 1s .8s forwards;
+  }
+  .start-btn:hover{border-color:var(--accent);color:var(--accent);gap:1.4rem;padding-right:2.6rem}
+  .start-btn .arc{width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center;font-size:0.8rem;transition:transform .5s}
+  .start-btn:hover .arc{transform:rotate(90deg)}
+
+  /* ── flow / stages ─────────────────────────── */
+  .flow{position:relative;padding-bottom:6rem}
+  .spine{position:absolute;left:clamp(14px,3.5vw,38px);top:0;bottom:0;width:1px;background:var(--line)}
+  .spine .lit{position:absolute;inset:0 auto auto 0;width:1px;height:0;background:linear-gradient(var(--accent),var(--sage));transition:height 1s cubic-bezier(.16,1,.3,1)}
+  @media(max-width:680px){.spine{display:none}}
+
+  .stage{
+    position:relative;
+    padding:clamp(2.5rem,6vw,5rem) 0 clamp(2.5rem,6vw,5rem) clamp(48px,9vw,110px);
+    border-bottom:1px solid var(--line);
+    scroll-margin-top:78px;
+  }
+  @media(max-width:680px){.stage{padding-left:0}}
+  .stage[hidden]{display:none}
+  .stage.in .reveal{opacity:1;transform:none}
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.12s}.reveal.d2{transition-delay:.24s}.reveal.d3{transition-delay:.36s}.reveal.d4{transition-delay:.48s}
+
+  .stage .node{
+    position:absolute;left:clamp(8px,3.5vw,32px);top:clamp(2.7rem,6vw,5.2rem);
+    width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-faint);
+    transition:all .6s;
+  }
+  .stage.in .node{border-color:var(--accent);box-shadow:0 0 0 5px rgba(200,100,60,0.1)}
+  .stage.in .node::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+  @media(max-width:680px){.stage .node{display:none}}
+
+  .stage-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .stage-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .stage-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .stage-phase{
+    margin-left:auto;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--ink-faint);border:1px solid var(--line);padding:0.3rem 0.7rem;border-radius:1rem;
+  }
+  .stage-phase.key{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .stage h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.8rem,4.4vw,3rem);line-height:1.1;letter-spacing:-0.01em}
+  .stage .desc{max-width:52ch;margin-top:1.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.95}
+  .stage .desc b{color:var(--accent-soft);font-weight:500}
+  .stage .desc code,.note code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft)}
+
+  /* viz frame */
+  .viz{
+    margin-top:2.4rem;background:linear-gradient(180deg,var(--viz-grad),transparent);
+    border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.2rem);
+    position:relative;overflow:hidden;
+  }
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* chips */
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .chip{font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);transition:all .4s}
+  .stage.in .chip{animation:pop .6s backwards}
+
+  /* probability / weight bars */
+  .probs{display:flex;flex-direction:column;gap:0.55rem;margin-top:0.4rem}
+  .prob{display:flex;align-items:center;gap:0.9rem}
+  .prob .t{font-family:var(--mono);font-size:0.78rem;width:88px;flex:none;color:var(--ink)}
+  .prob .bar{flex:1;height:8px;background:var(--line-strong);border-radius:4px;position:relative;overflow:hidden}
+  .prob .bar i{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-soft));border-radius:4px;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+  .stage.in .prob .bar i{width:var(--w)}
+  .prob .pct{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);width:44px;text-align:right;flex:none}
+
+  /* fact cards */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0.8rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.5rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.06em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+
+  /* role / capability tags */
+  .learns{display:flex;flex-wrap:wrap;gap:0.55rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.86rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.45rem 0.85rem;background:var(--chip-bg)}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.45rem;font-family:var(--mono);font-size:0.72rem}
+
+  /* steps */
+  .steps{display:flex;flex-direction:column;gap:0}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.5rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.72rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);width:27px;height:27px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.7rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc span{display:block;color:var(--ink-dim);font-size:0.92rem;margin-top:0.15rem;line-height:1.65}
+  .step:not(:last-child)::before{content:"";position:absolute;left:13px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+
+  /* ── matrices (the star of this post) ──────── */
+  .matblock{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:0.7rem 1rem}
+  .matunit{display:flex;flex-direction:column;align-items:center;gap:0.55rem}
+  .matname{font-family:var(--serif);font-size:1.05rem;color:var(--ink)}
+  .matname b{font-style:italic;color:var(--accent);font-weight:500}
+  .matname span{font-family:var(--mono);font-size:0.56rem;color:var(--ink-faint);letter-spacing:0.06em;margin-left:0.35rem}
+  .matflex{display:flex;align-items:center;gap:0.45rem}
+  .rowlab{display:flex;flex-direction:column;gap:0.4rem;justify-content:center}
+  .rowlab span{height:32px;display:grid;place-items:center;font-family:var(--mono);font-size:0.72rem;color:var(--accent-soft)}
+  .matrix{position:relative;display:flex;flex-direction:column;gap:0.4rem;padding:0.4rem 0.75rem}
+  .matrix::before,.matrix::after{content:"";position:absolute;top:3px;bottom:3px;width:7px;border:1.6px solid var(--ink-faint)}
+  .matrix::before{left:-1px;border-right:none;border-radius:5px 0 0 5px}
+  .matrix::after{right:-1px;border-left:none;border-radius:0 5px 5px 0}
+  .mrow{display:flex;gap:0.4rem}
+  .mcell{
+    width:40px;height:32px;display:grid;place-items:center;
+    font-family:var(--mono);font-size:0.76rem;color:var(--ink);
+    background:var(--chip-bg);border:1px solid var(--line);border-radius:5px;
+    transition:background .4s,border-color .4s,color .4s,transform .4s,opacity .4s;
+  }
+  .mcell.hl{background:rgba(200,100,60,0.22);border-color:var(--accent);color:var(--accent-soft);transform:translateY(-2px)}
+  .mcell.hl2{background:rgba(127,145,131,0.22);border-color:var(--sage);color:var(--sage);transform:translateY(-2px)}
+  .mcell.lo{opacity:0.3}
+  .mcell.masked{color:var(--ink-faint);background:transparent;border-style:dashed;opacity:0.55}
+  .matop{font-family:var(--serif);font-size:1.25rem;color:var(--ink-faint);font-style:italic;padding:0 0.1rem}
+  .matcap{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--sage);margin-top:0.1rem}
+
+  /* worked dot-product line */
+  .dotline{font-family:var(--mono);font-size:0.92rem;color:var(--ink);text-align:center;margin-top:1.4rem;line-height:2.1;letter-spacing:0.01em}
+  .dotline .tm{color:var(--ink-faint);transition:color .4s}
+  .dotline .tm.on{color:var(--accent);font-weight:500}
+  .dotline .rs{color:var(--accent);font-weight:500;font-size:1.05em}
+
+  /* weighted-sum mixing */
+  .mix{display:flex;flex-direction:column;gap:0.55rem;font-family:var(--mono);font-size:0.82rem;align-items:center}
+  .mixrow{display:flex;align-items:center;gap:0.7rem;opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s}
+  .mixrow.on{opacity:1;transform:none}
+  .mixrow .w{color:var(--accent);width:3.2em;text-align:right}
+  .mixrow .x{color:var(--ink-faint)}
+  .mixrow .vec{color:var(--ink-dim);letter-spacing:0.05em}
+  .mixrule{width:min(320px,72vw);height:1px;background:var(--line-strong);margin:0.2rem 0}
+  .mixres{display:flex;align-items:center;gap:0.7rem;opacity:0;transform:translateY(8px);transition:opacity .6s,transform .6s}
+  .mixres.on{opacity:1;transform:none}
+  .mixres .lbl{color:var(--accent-soft)}
+  .mixres .out{color:var(--accent);font-weight:500;font-size:1.05em;letter-spacing:0.06em}
+
+  /* attention heatmap */
+  .attnwrap{display:flex;flex-direction:column;align-items:center;gap:0.5rem;margin-top:0.3rem}
+  .attn{display:grid;gap:4px}
+  .attn .c{width:46px;height:36px;border-radius:4px;background:var(--line-strong);display:grid;place-items:center;font-family:var(--mono);font-size:0.66rem;color:transparent;transition:background .6s,color .6s}
+  .attn .c.lit{color:var(--ink)}
+  .attn-axis{font-family:var(--mono);font-size:0.64rem;color:var(--ink-faint);display:flex;gap:4px}
+  .attn-axis span{width:46px;text-align:center}
+  .attn-side{display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:0.64rem;color:var(--accent-soft)}
+  .attn-side span{height:36px;display:grid;place-items:center}
+  .attn-row{display:flex;align-items:center;gap:0.5rem}
+
+  /* multi-head mini grids */
+  .heads{display:flex;flex-wrap:wrap;gap:0.7rem;justify-content:center}
+  .head{border:1px solid var(--line);border-radius:8px;padding:0.6rem;background:var(--chip-bg);display:flex;flex-direction:column;align-items:center;gap:0.4rem}
+  .head .hg{display:grid;grid-template-columns:repeat(3,11px);gap:2px}
+  .head .hg i{width:11px;height:11px;border-radius:2px;background:var(--line-strong)}
+  .head .hl-name{font-family:var(--mono);font-size:0.56rem;letter-spacing:0.04em;color:var(--ink-faint)}
+
+  /* final formula */
+  .formula{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:0.3rem;font-family:var(--serif);font-size:clamp(1.3rem,3.6vw,1.9rem);color:var(--ink);line-height:1.5;text-align:center}
+  .formula .fp{padding:0.1em 0.28em;border-radius:0.35em;transition:all .4s}
+  .formula .fp.q{color:var(--accent)}
+  .formula .fp.k{color:var(--sage)}
+  .formula .fp.v{color:var(--accent-soft)}
+  .formula .fp.sm{color:var(--ink-dim);font-style:italic}
+  .fkey{display:flex;flex-wrap:wrap;gap:0.5rem 1rem;justify-content:center;margin-top:1.5rem;font-family:var(--mono);font-size:0.68rem;color:var(--ink-dim)}
+  .fkey span i{font-style:normal;font-weight:600;margin-right:0.4rem}
+  .fkey .q i{color:var(--accent)}.fkey .k i{color:var(--sage)}.fkey .v i{color:var(--accent-soft)}
+
+  /* intro diagram */
+  .introdiag{width:100%;max-width:360px;height:160px;display:block;margin:0 auto}
+  .introdiag .arc{fill:none;stroke:var(--accent);stroke-linecap:round;stroke-dasharray:var(--len);stroke-dashoffset:0}
+  .stage.in .introdiag .arc{animation:draw 1.5s .2s cubic-bezier(.16,1,.3,1) backwards}
+  .introdiag .nd{fill:var(--bg);stroke:var(--ink-faint);stroke-width:1.4}
+  .stage.in .introdiag .nd.focus{stroke:var(--accent)}
+  .introdiag .tk{font-family:var(--serif);font-size:15px;fill:var(--ink);text-anchor:middle}
+  .introdiag .wl{font-family:var(--mono);font-size:9px;fill:var(--accent-soft);text-anchor:middle}
+
+  /* finale */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5;opacity:0;transition:opacity 1s}
+  .finale.show{opacity:1}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:30ch;margin:0 auto;color:var(--ink)}
+  .finale .fcode{font-family:var(--mono);font-style:normal;color:var(--accent-soft);font-size:0.92em}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+  .replay{margin-top:2.4rem;display:block;margin-left:auto;margin-right:auto;cursor:pointer;background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.16em;text-transform:uppercase;transition:color .4s;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .replay:hover{color:var(--accent)}
+
+  /* controls */
+  .auto-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:1rem;transition:all .4s}
+  .auto-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auto-btn.on{border-color:var(--sage);color:var(--sage)}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* keyframes */
+  @keyframes draw{from{stroke-dashoffset:var(--len)}to{stroke-dashoffset:0}}
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.mixrow,.mixres{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">注意力 · <b>逐矩阵拆解</b></div>
+    </div>
+    <div class="progress-wrap">
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="auto-btn" id="autoBtn">自动播放</button>
+      <div class="progress-num"><b id="pNum">00</b> / 10</div>
+      <div class="progress-track"><div class="progress-fill" id="pFill"></div></div>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail"></nav>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="kicker">A Field Guide · 注意力机制</div>
+      <h1>
+        <span class="l">注意力，</span>
+        <span class="l"><em>逐矩阵</em>拆开。</span>
+      </h1>
+      <p class="sub"><code>softmax(QKᵀ/√dₖ)·V</code> —— 这条被反复背诵的公式，到底在算什么？我们用一句三个字的话「<b>猫 很 累</b>」，把每一个矩阵乘法、连同每一个数字，一步一步算给你看。</p>
+      <div class="meta">
+        <div><b>1</b>条核心公式</div>
+        <div><b>3</b>个词的例子</div>
+        <div><b>6</b>步矩阵运算</div>
+      </div>
+      <button class="start-btn" id="startBtn">
+        开始拆解
+        <span class="arc">↓</span>
+      </button>
+    </section>
+
+    <!-- FLOW -->
+    <section class="flow" id="flow">
+      <div class="spine"><div class="lit" id="lit"></div></div>
+
+      <!-- 01 · 直觉 -->
+      <article class="stage" data-phase="问题">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">01</span><span class="stage-en">The Idea</span><span class="stage-phase">问题</span></div>
+        <h2 class="reveal d1">让每个词，看见其他词</h2>
+        <p class="desc reveal d1">一个词向量刚进入网络时，只「认识自己」。可「<b>累</b>」要表达清楚，必须知道是<b>谁</b>累了——它得回头看看「猫」。注意力机制做的，正是让每个词环顾整句，按<b>相关程度</b>给其他词分配权重，再把它们的信息<b>加权汇总</b>进自己。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">「累」该把注意力分给谁？</div>
+          <svg class="introdiag" viewBox="0 0 360 160" aria-hidden="true">
+            <path class="arc" style="--len:240" d="M300,118 C250,40 110,40 62,116" stroke-width="3.4"/>
+            <path class="arc" style="--len:150" d="M300,120 C268,66 200,64 168,114" stroke-width="1.6"/>
+            <path class="arc" style="--len:120" d="M306,116 C340,86 338,128 312,120" stroke-width="2.6"/>
+            <circle class="nd" cx="60" cy="124" r="20"/><text class="tk" x="60" y="129">猫</text>
+            <circle class="nd" cx="180" cy="124" r="20"/><text class="tk" x="180" y="129">很</text>
+            <circle class="nd focus" cx="300" cy="124" r="20"/><text class="tk" x="300" y="129">累</text>
+            <text class="wl" x="150" y="44">0.55</text>
+            <text class="wl" x="208" y="70">0.12</text>
+            <text class="wl" x="330" y="96">0.33</text>
+          </svg>
+          <div class="note">这三个数字（0.55 / 0.12 / 0.33）就是<b>注意力权重</b>。本文要做的，就是把它们一步步算出来——它们不是拍脑袋，而是矩阵运算的结果。</div>
+        </div>
+      </article>
+
+      <!-- 02 · 输入 X -->
+      <article class="stage" data-phase="准备">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">Input Matrix</span><span class="stage-phase">准备</span></div>
+        <h2 class="reveal d1">一句话，变成一个矩阵</h2>
+        <p class="desc reveal d1">每个词先被嵌入成一个向量（这里取维度 <code>d=4</code>，真实模型里是几百上千维），再加上位置信息。三个词堆叠起来，就是输入矩阵 <b>X ∈ ℝ³ˣ⁴</b>——三行（每行一个词）、四列（每列一个特征）。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">输入 / X = 词向量堆叠</div>
+          <div class="matblock" id="xMat"></div>
+          <div class="note">下面所有运算，都从这张 <b>3×4</b> 的表开始。数字是为了好算而特意挑的，但<b>运算规则与真实模型一模一样</b>。</div>
+        </div>
+      </article>
+
+      <!-- 03 · Q K V -->
+      <article class="stage" data-phase="投影">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">Q · K · V</span><span class="stage-phase key">投影</span></div>
+        <h2 class="reveal d1">三把钥匙：Query、Key、Value</h2>
+        <p class="desc reveal d1">注意力不直接用 X，而是先把它<b>投影成三份</b>。X 分别乘上三个<b>可学习</b>的权重矩阵 <code>W_Q、W_K、W_V</code>，得到 <b>Q（查询）、K（键）、V（值）</b>。这三个权重，正是预训练学到的东西。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">三种角色 / The three roles</div>
+          <div class="learns">
+            <span class="learn"><i>Query 查询</i>我在找什么？</span>
+            <span class="learn"><i>Key 键</i>我能用什么标识被找到？</span>
+            <span class="learn"><i>Value 值</i>我实际携带的信息。</span>
+          </div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">投影结果 / Q = X·W_Q，K = X·W_K，V = X·W_V</div>
+          <div class="matblock" id="qkvMat"></div>
+          <div class="note">打个比方：每个词都举着一块<b>查询牌 Q</b>（我想找什么）、一块<b>标识牌 K</b>（我是什么）、和一份<b>货物 V</b>（我能给出什么）。接下来，就是拿查询牌去对所有标识牌。</div>
+        </div>
+      </article>
+
+      <!-- 04 · 打分 QKᵀ -->
+      <article class="stage" data-phase="打分">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Scores = QKᵀ</span><span class="stage-phase key">打分</span></div>
+        <h2 class="reveal d1">打分：Query 与 Key 做点积</h2>
+        <p class="desc reveal d1">每个词的查询牌 <b>q</b>，去和<b>每一个</b>词的标识牌 <b>k</b> 做<b>点积</b>。点积越大，说明两者越「对得上」。所有点积排成一张 <b>n×n</b> 的分数表 <code>S = QKᵀ</code>：第 i 行第 j 列，就是「词 i 该多关注词 j」。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">手算 / 「累」看「猫」的分数 = q累 · k猫</div>
+          <div class="dotline" id="dotLine"></div>
+          <div class="note">点积就是<b>对应位置相乘再相加</b>。3 这个分数，来自 q累 与 k猫 在第 1、第 3 维上的「共振」。</div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">完整分数矩阵 / S = QKᵀ（3×3）</div>
+          <div class="matblock" id="scoreMat"></div>
+          <div class="note">高亮的「累」这一行 <code>[3, 0, 2]</code>：它最想看「猫」(3)，其次看自己(2)，几乎不理「很」(0)。但这还是<b>原始分数</b>，又大又不规整——下一步先把它驯服。</div>
+        </div>
+      </article>
+
+      <!-- 05 · 缩放 -->
+      <article class="stage" data-phase="稳定">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">Scale ÷√dₖ</span><span class="stage-phase">稳定</span></div>
+        <h2 class="reveal d1">缩放：除以 √dₖ</h2>
+        <p class="desc reveal d1">维度越高，点积的数值就越容易变得很大；而过大的分数会把下一步的 softmax 推进<b>饱和区</b>，那里梯度几乎为零、模型学不动。所以先统一除以 <code>√dₖ</code> 把方差拉回 ~1。这里 <code>dₖ=4</code>，于是除以 <b>2</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">缩放「累」这一行 / S累 ÷ √4</div>
+          <div class="matblock" id="scaleMat"></div>
+          <div class="note"><code>[3, 0, 2] ÷ 2 = [1.5, 0, 1.0]</code>。数值变温和了，但<b>相对大小不变</b>——「猫」依然领先。缩放只稳定数值，不改变偏好。</div>
+        </div>
+      </article>
+
+      <!-- 06 · softmax -->
+      <article class="stage" data-phase="归一">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">Softmax</span><span class="stage-phase key">归一</span></div>
+        <h2 class="reveal d1">Softmax：把分数变成权重</h2>
+        <p class="desc reveal d1">对每一行做 <b>softmax</b>：先取 <code>eˣ</code> 放大差距，再除以总和归一。出来的一行数字<b>非负、且加起来正好等于 1</b>——这就是注意力权重 <b>α</b>。「累」这一行，终于变成了一个干净的概率分布。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">softmax([1.5, 0, 1.0]) → 权重 α</div>
+          <div class="probs">
+            <div class="prob"><span class="t">→ 猫</span><span class="bar"><i style="--w:55%"></i></span><span class="pct">0.55</span></div>
+            <div class="prob"><span class="t">→ 很</span><span class="bar"><i style="--w:12%"></i></span><span class="pct">0.12</span></div>
+            <div class="prob"><span class="t">→ 累</span><span class="bar"><i style="--w:33%"></i></span><span class="pct">0.33</span></div>
+          </div>
+          <div class="note"><code>e¹·⁵=4.48, e⁰=1, e¹·⁰=2.72</code>，三者之和 8.20。各自一除：<b>0.55 / 0.12 / 0.33</b>——正是第 1 站那三个数字的来历。</div>
+        </div>
+      </article>
+
+      <!-- 07 · 加权求和 -->
+      <article class="stage" data-phase="输出">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Weighted Sum · αV</span><span class="stage-phase key">输出</span></div>
+        <h2 class="reveal d1">加权求和：按权重取出 Value</h2>
+        <p class="desc reveal d1">最后一步，也是<b>收获的一步</b>：拿刚算出的权重 α，去给每个词的<b>值向量 V 加权求和</b>。<code>o累 = 0.55·v猫 + 0.12·v很 + 0.33·v累</code>。「累」的新向量，从此<b>装进了整句话的信息</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">混合 / o累 = Σ αᵢ·vᵢ</div>
+          <div class="mix" id="mixWork"></div>
+          <div class="note">因为这里 V 取成了<b>单位向量</b>，输出向量可以被直接读出来：「累」的新表示 = <b>55% 的猫 + 12% 的很 + 33% 的自己</b>。这，就是注意力干的全部事情。</div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">三个词各自的权重 / 注意力热力图 α</div>
+          <div class="attnwrap" id="attnMap"></div>
+          <div class="note">每一<b>行</b>都是一个词的注意力分配（一行和为 1）。颜色越亮，关注越多。把三行叠起来，就是这句话内部的全部「目光流向」。</div>
+        </div>
+      </article>
+
+      <!-- 08 · 因果遮罩 -->
+      <article class="stage" data-phase="约束">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">Causal Mask</span><span class="stage-phase">约束</span></div>
+        <h2 class="reveal d1">因果遮罩：不许偷看未来</h2>
+        <p class="desc reveal d1">上面是<b>双向</b>注意力。但用来<b>生成文字</b>的语言模型有一条铁律：预测某个词时，不能看见它<b>后面</b>的词。做法很巧妙——在 softmax <b>之前</b>，把分数矩阵的<b>上三角</b>全部设成 <code>−∞</code>。这样 eˣ 后它们都趋近于 0，未来位置自然分不到任何权重。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">遮罩后的分数 / 上三角 = −∞</div>
+          <div class="matblock" id="maskMat"></div>
+          <div class="note">于是「猫」（第 1 个词）只能看自己；「很」能看「猫、很」；只有「累」（最后一个）能纵览全句。把这块下三角，叫做<b>因果遮罩 causal mask</b>。</div>
+        </div>
+      </article>
+
+      <!-- 09 · 多头 -->
+      <article class="stage" data-phase="扩展">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Multi-Head</span><span class="stage-phase key">扩展</span></div>
+        <h2 class="reveal d1">多头：并行的多重视角</h2>
+        <p class="desc reveal d1">一次注意力只能捕捉<b>一种</b>关系。于是干脆<b>并行跑多个</b>——每个「头」有自己独立的 W_Q/K/V，各自投影到 <code>dₖ = d/h</code> 维。不同的头会自发分工：有的盯<b>语法</b>，有的追<b>指代</b>，有的看<b>位置</b>。算完把所有头<b>拼接</b>起来，再过一个输出投影 <code>W_O</code>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">一个典型配置 / Typical config</div>
+          <div class="facts">
+            <div class="fact"><b>512</b><span>模型维度 d</span></div>
+            <div class="fact"><b>8</b><span>注意力头 h</span></div>
+            <div class="fact"><b>64</b><span>每头维度 dₖ</span></div>
+            <div class="fact"><b>×N</b><span>逐层重复</span></div>
+          </div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">八个头，各看各的 / 8 heads, 8 patterns</div>
+          <div class="heads" id="headsGrid"></div>
+          <div class="note">每个小方阵是一个头的注意力图样——彼此<b>截然不同</b>。正是这种多样性，让模型能同时兼顾语法、指代、远近等多种关系。</div>
+        </div>
+      </article>
+
+      <!-- 10 · 公式归位 -->
+      <article class="stage" data-phase="收束">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">10</span><span class="stage-en">The Formula</span><span class="stage-phase">收束</span></div>
+        <h2 class="reveal d1">公式，归位</h2>
+        <p class="desc reveal d1">现在再看这条公式，每一个符号你都<b>亲手算过它的数字</b>了：</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">Attention(Q, K, V)</div>
+          <div class="formula">
+            <span class="fp sm">softmax</span><span>(</span>
+            <span class="fp q">Q</span><span class="fp k">Kᵀ</span>
+            <span>/</span><span>√dₖ</span><span>)</span>
+            <span class="fp v">V</span>
+          </div>
+          <div class="fkey">
+            <span class="q"><i>QKᵀ</i>打分：谁该看谁</span>
+            <span class="sm"><i>√dₖ</i>缩放：稳住数值</span>
+            <span class="k"><i>softmax</i>归一：变成权重</span>
+            <span class="v"><i>·V</i>求和：取出信息</span>
+          </div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">它在 Transformer 里的位置 / In the block</div>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div class="sc"><b>多头自注意力<em>Multi-Head Attention</em></b><span>就是本文从头拆到尾的这套运算。</span></div></div>
+            <div class="step"><span class="si">2</span><div class="sc"><b>残差 + 层归一<em>Add & LayerNorm</em></b><span>把注意力的输出加回输入，再归一化，稳住训练。</span></div></div>
+            <div class="step"><span class="si">3</span><div class="sc"><b>前馈网络<em>Feed-Forward</em></b><span>每个位置各自过一个小 MLP，做非线性变换。</span></div></div>
+            <div class="step"><span class="si">4</span><div class="sc"><b>再残差 + 归一，然后重复 ×N<em>Repeat</em></b><span>几十个这样的 block 叠起来，就是一座 Transformer。</span></div></div>
+          </div>
+          <div class="note">注意力负责<b>「让词互相看见」</b>，前馈网络负责<b>「各自深入思考」</b>。两者交替几十层，语言的理解便层层浮现。</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Walkthrough</div>
+      <h3>从「猫很累」到 <span class="fcode">softmax(QKᵀ/√dₖ)·V</span>——现在，每个符号你都见过它的数字了。</h3>
+      <a class="nextpost" href="index.html">← 回到原理手记，看下一篇</a>
+      <button class="replay" id="replayBtn">↺ 再拆一遍</button>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // theme toggle (persisted, shared key across the whole blog)
+  const themeBtn = document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight = document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){ document.documentElement.removeAttribute('data-theme'); localStorage.setItem('llm-theme','dark'); }
+    else { document.documentElement.setAttribute('data-theme','light'); localStorage.setItem('llm-theme','light'); }
+  });
+
+  const stages = Array.from(document.querySelectorAll('.stage'));
+  const rail = document.getElementById('rail');
+  const pNum = document.getElementById('pNum');
+  const pFill = document.getElementById('pFill');
+  const lit = document.getElementById('lit');
+  const startBtn = document.getElementById('startBtn');
+  const autoBtn = document.getElementById('autoBtn');
+  const finale = document.getElementById('finale');
+  const replayBtn = document.getElementById('replayBtn');
+  let current = -1, auto = false, autoTimer = null;
+  const railLabels = ['直觉','输入 X','Q·K·V','打分','缩放','Softmax','加权和','遮罩','多头','公式'];
+
+  // build side rail
+  railLabels.forEach((lbl,i)=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="dot"></span><span class="lbl">${String(i+1).padStart(2,'0')} ${lbl}</span>`;
+    b.addEventListener('click',()=>{ stages[i].scrollIntoView({behavior:'smooth',block:'start'}); });
+    rail.appendChild(b);
+  });
+  const railBtns = Array.from(rail.children);
+
+  function updateProgress(){
+    const n = current+1;
+    pNum.textContent = String(n).padStart(2,'0');
+    pFill.style.width = (n/stages.length*100)+'%';
+    lit.style.height = (n/stages.length*100)+'%';
+    railBtns.forEach((b,i)=>{ b.classList.toggle('active', i===current); b.classList.toggle('done', i<current); });
+  }
+
+  // scroll-driven reveal: add .in + fire one-time effect as each stage enters view
+  const revealObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting && !e.target.classList.contains('in')){
+        e.target.classList.add('in');
+        runStageEffect(stages.indexOf(e.target));
+      }
+    });
+  }, {threshold:0, rootMargin:'0px 0px -20% 0px'});
+  stages.forEach(s=>revealObserver.observe(s));
+
+  new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) finale.classList.add('show'); });
+  }, {threshold:0.3}).observe(finale);
+
+  // track current stage for progress + rail
+  let ticking=false;
+  function onScroll(){
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const line = window.innerHeight*0.45;
+      let idx=-1;
+      stages.forEach((s,i)=>{ if(s.getBoundingClientRect().top <= line) idx=i; });
+      if(idx!==current){ current=idx; updateProgress(); }
+      if(current>=0) rail.classList.add('show');
+      ticking=false;
+    });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+
+  startBtn.addEventListener('click',()=>{ rail.classList.add('show'); stages[0].scrollIntoView({behavior:'smooth',block:'start'}); });
+
+  // autoplay = hands-free auto-scroll
+  function autoTick(){
+    if(!auto) return;
+    const next = current+1;
+    if(next>=stages.length){ finale.scrollIntoView({behavior:'smooth',block:'center'}); stopAuto(); return; }
+    stages[next].scrollIntoView({behavior:'smooth',block:'start'});
+    autoTimer=setTimeout(autoTick, 4600);
+  }
+  function stopAuto(){ auto=false; autoBtn.classList.remove('on'); autoBtn.textContent='自动播放'; if(autoTimer)clearTimeout(autoTimer); }
+  autoBtn.addEventListener('click',()=>{
+    if(auto){ stopAuto(); return; }
+    auto=true; autoBtn.classList.add('on'); autoBtn.textContent='■ 停止'; rail.classList.add('show'); autoTick();
+  });
+
+  replayBtn.addEventListener('click',()=>{
+    stopAuto();
+    stages.forEach(s=>s.classList.remove('in'));
+    finale.classList.remove('show');
+    document.querySelectorAll('.mixrow,.mixres').forEach(el=>el.classList.remove('on'));
+    document.querySelectorAll('.mcell.hl,.mcell.hl2').forEach(el=>el.classList.remove('hl','hl2'));
+    document.querySelectorAll('#attnMap .c').forEach(c=>{c.style.background='';c.classList.remove('lit');});
+    current=-1; updateProgress();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  // ── matrix builder ──
+  function makeMatrix(data,{name='',dim='',rowLabels=null,id=null}={}){
+    const unit=document.createElement('div');unit.className='matunit';
+    if(name||dim){const nm=document.createElement('div');nm.className='matname';nm.innerHTML=`<b>${name}</b>`+(dim?`<span>${dim}</span>`:'');unit.appendChild(nm);}
+    const flex=document.createElement('div');flex.className='matflex';
+    if(rowLabels){const rl=document.createElement('div');rl.className='rowlab';rowLabels.forEach(t=>{const s=document.createElement('span');s.textContent=t;rl.appendChild(s);});flex.appendChild(rl);}
+    const m=document.createElement('div');m.className='matrix';if(id)m.id=id;
+    data.forEach((row,r)=>{const rr=document.createElement('div');rr.className='mrow';
+      row.forEach((val,c)=>{const cell=document.createElement('div');cell.className='mcell';cell.dataset.r=r;cell.dataset.c=c;cell.textContent=val;rr.appendChild(cell);});
+      m.appendChild(rr);});
+    flex.appendChild(m);unit.appendChild(flex);
+    return unit;
+  }
+  function op(sym){const s=document.createElement('span');s.className='matop';s.textContent=sym;return s;}
+  function matcap(unit,txt){const c=document.createElement('div');c.className='matcap';c.textContent=txt;unit.appendChild(c);return unit;}
+
+  // ── the worked example's data ──
+  const toks=['猫','很','累'];
+  const X=[[1,0,1,0],[0,1,0,1],[1,1,0,0]];
+  const Q=[[1,0,1,0],[0,1,0,1],[1,0,2,0]];
+  const K=[[1,0,1,0],[0,1,0,1],[0,0,1,1]];
+  const V=[[1,0,0],[0,1,0],[0,0,1]];
+  const S=[[2,0,1],[0,2,1],[3,0,2]];
+  const Sscale=[['1.0','0','0.5'],['0','1.0','0.5'],['1.5','0','1.0']];
+  const A=[[0.51,0.19,0.31],[0.19,0.51,0.31],[0.55,0.12,0.33]];
+
+  // ── build static viz once ──
+  // 02 · X
+  document.getElementById('xMat').appendChild(makeMatrix(X,{name:'X',dim:'3×4',rowLabels:toks}));
+  // 03 · Q K V
+  (function(){
+    const host=document.getElementById('qkvMat');
+    const q=makeMatrix(Q,{name:'Q',dim:'3×4',rowLabels:toks});matcap(q,'Query');
+    const k=makeMatrix(K,{name:'K',dim:'3×4',rowLabels:toks});matcap(k,'Key');
+    const v=makeMatrix(V,{name:'V',dim:'3×3',rowLabels:toks});matcap(v,'Value');
+    host.append(q,k,v);
+  })();
+  // 04 · dot line + score matrix
+  (function(){
+    const dl=document.getElementById('dotLine');
+    dl.innerHTML='q<sub>累</sub>·k<sub>猫</sub> &nbsp;=&nbsp; '+
+      '<span class="tm">1·1</span> + <span class="tm">0·0</span> + <span class="tm">2·1</span> + <span class="tm">0·0</span>'+
+      ' &nbsp;=&nbsp; <span class="rs">3</span>';
+    document.getElementById('scoreMat').appendChild(makeMatrix(S,{name:'S = QKᵀ',dim:'3×3',rowLabels:toks}));
+  })();
+  // 05 · scale (just 累 row, before → after)
+  (function(){
+    const host=document.getElementById('scaleMat');
+    const before=makeMatrix([[3,0,2]],{name:'S累',dim:'原始'});
+    const after=makeMatrix([['1.5','0','1.0']],{name:'÷ √4',dim:'缩放后'});
+    host.append(before, op('→'), after);
+  })();
+  // 07 · weighted-sum mixing + heatmap
+  (function(){
+    const mix=document.getElementById('mixWork');
+    const rows=[['0.55','v猫','[1, 0, 0]'],['0.12','v很','[0, 1, 0]'],['0.33','v累','[0, 0, 1]']];
+    rows.forEach(r=>{
+      const d=document.createElement('div');d.className='mixrow';
+      d.innerHTML=`<span class="w">${r[0]}</span><span class="x">×</span><span class="vec">${r[1]} = ${r[2]}</span>`;
+      mix.appendChild(d);
+    });
+    const rule=document.createElement('div');rule.className='mixrule';mix.appendChild(rule);
+    const res=document.createElement('div');res.className='mixres';
+    res.innerHTML=`<span class="lbl">o累 =</span><span class="out">[0.55, 0.12, 0.33]</span>`;
+    mix.appendChild(res);
+
+    // heatmap (3×3) with row labels + col axis
+    const wrap=document.getElementById('attnMap');
+    const rowEl=document.createElement('div');rowEl.className='attn-row';
+    const side=document.createElement('div');side.className='attn-side';
+    toks.forEach(t=>{const s=document.createElement('span');s.textContent=t;side.appendChild(s);});
+    const grid=document.createElement('div');grid.className='attn';grid.id='attnGrid';grid.style.gridTemplateColumns=`repeat(3,46px)`;
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++){const cell=document.createElement('div');cell.className='c';cell.dataset.r=r;cell.dataset.c=c;cell.textContent=A[r][c].toFixed(2);grid.appendChild(cell);}
+    rowEl.append(side,grid);
+    const axis=document.createElement('div');axis.className='attn-axis';
+    const pad=document.createElement('span');pad.style.width='0';axis.appendChild(pad);
+    toks.forEach(t=>{const s=document.createElement('span');s.textContent=t;axis.appendChild(s);});
+    wrap.append(rowEl,axis);
+  })();
+  // 08 · masked score matrix
+  (function(){
+    const data=[[2,'−∞','−∞'],[0,2,'−∞'],[3,0,2]];
+    const unit=makeMatrix(data,{name:'S + mask',dim:'3×3',rowLabels:toks});
+    unit.querySelectorAll('.mcell').forEach(cell=>{ if(+cell.dataset.c>+cell.dataset.r) cell.classList.add('masked'); });
+    document.getElementById('maskMat').appendChild(unit);
+  })();
+  // 09 · multi-head mini grids
+  (function(){
+    const host=document.getElementById('headsGrid');
+    const names=['语法','指代','邻近','远依赖','主谓','位置','复指','聚焦'];
+    // a few hand-set 3x3 patterns (0..1), varied so heads look distinct
+    const pats=[
+      [.1,.1,.8,.2,.7,.1,.1,.2,.7],
+      [.8,.1,.1,.6,.3,.1,.5,.2,.3],
+      [.6,.4,0,.2,.6,.2,0,.4,.6],
+      [.9,.1,0,.7,.2,.1,.8,.1,.1],
+      [.2,.7,.1,.1,.2,.7,.6,.2,.2],
+      [.5,.3,.2,.4,.4,.2,.3,.3,.4],
+      [.1,.2,.7,.7,.2,.1,.2,.7,.1],
+      [.7,.2,.1,.2,.7,.1,.1,.2,.7]
+    ];
+    pats.forEach((p,hi)=>{
+      const h=document.createElement('div');h.className='head';
+      const g=document.createElement('div');g.className='hg';
+      p.forEach(v=>{const i=document.createElement('i');i.dataset.v=v;g.appendChild(i);});
+      const nm=document.createElement('div');nm.className='hl-name';nm.textContent='头'+(hi+1)+' · '+names[hi];
+      h.append(g,nm);host.appendChild(h);
+    });
+  })();
+
+  // ── per-stage timed effects (index = position, 0-based) ──
+  function runStageEffect(i){
+    if(i===3) animateDot();
+    if(i===6){ animateMix(); fillAttn(); }
+    if(i===7) animateMask();
+    if(i===8) animateHeads();
+  }
+  function animateDot(){
+    const terms=document.querySelectorAll('#dotLine .tm');
+    const score=document.querySelector('#scoreMat .mcell[data-r="2"][data-c="0"]');
+    terms.forEach((t,k)=>setTimeout(()=>t.classList.add('on'), 500+k*420));
+    // highlight 累-row of the score matrix
+    const row=document.querySelectorAll('#scoreMat .mcell[data-r="2"]');
+    setTimeout(()=>row.forEach((c,k)=>setTimeout(()=>c.classList.add('hl'),k*180)), 700);
+  }
+  function animateMix(){
+    const rows=document.querySelectorAll('#mixWork .mixrow');
+    rows.forEach((r,k)=>setTimeout(()=>r.classList.add('on'), 300+k*500));
+    const res=document.querySelector('#mixWork .mixres');
+    if(res) setTimeout(()=>res.classList.add('on'), 300+rows.length*500+200);
+  }
+  function fillAttn(){
+    const cells=document.querySelectorAll('#attnGrid .c');
+    cells.forEach(c=>{
+      const v=A[+c.dataset.r][+c.dataset.c];
+      setTimeout(()=>{
+        c.style.background=`rgba(200,100,60,${(0.1+v*0.85).toFixed(2)})`;
+        if(v>=0.3) c.classList.add('lit');
+      }, 200 + (+c.dataset.r*3 + +c.dataset.c)*70);
+    });
+  }
+  function animateMask(){
+    const cells=document.querySelectorAll('#maskMat .mcell.masked');
+    cells.forEach((c,k)=>{ c.style.opacity='1'; setTimeout(()=>{c.style.opacity='0.45';}, 200+k*160); });
+  }
+  function animateHeads(){
+    document.querySelectorAll('#headsGrid .hg i').forEach((cell,k)=>{
+      const v=parseFloat(cell.dataset.v);
+      setTimeout(()=>{ cell.style.background=`rgba(200,100,60,${(0.08+v*0.8).toFixed(2)})`; }, k*16);
+    });
+  }
+
+  updateProgress();
+})();
+</script>
+</body>
+</html>
