@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<!--
+  原理手记 / Field Notes — 混合专家 MoE（编辑式长文）
+  Editorial layout: head + topbar + atmosphere from the skeleton; rail/spine/
+  progress/autoplay dropped; plain <section>s of heading + .desc + .viz.
+  All math rendered with KaTeX (CDN trio, deferred).
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>混合专家 MoE：一屋子专家，每次只叫醒两个 · 原理手记</title>
+<meta name="description" content="把臃肿的前馈层拆成许多小专家，每个 token 只惊动其中两个——总参数涨十倍，单次算力却几乎不动。从路由、Top-k、负载均衡到共享/细粒度专家与专家并行，连数字一起讲清 Mixture of Experts。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── reading progress + top bar ──────────────────────────── */
+  .read-bar{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--accent),var(--sage));z-index:60;transition:width .15s linear}
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1000px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:96vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;font-size:clamp(2.6rem,7.5vw,5.6rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:48ch;margin-top:2.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero-formula{margin-top:2.4rem;padding:1.3rem 1.5rem;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--viz-grad),transparent);overflow-x:auto;opacity:0;animation:rise 1s .62s forwards}
+  .hero-formula .legend{margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.4rem 1.4rem;font-family:var(--mono);font-size:0.66rem;color:var(--ink-faint);letter-spacing:0.03em}
+  .hero-formula .legend b{font-weight:500}
+  .hero-formula .legend .lq{color:var(--accent)} .hero-formula .legend .lk{color:var(--sage)} .hero-formula .legend .lv{color:var(--accent-soft)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:2.8rem;opacity:0;animation:rise 1s .72s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0;font-family:var(--serif)}
+
+  /* ── editorial sections ──────────────────────────────────── */
+  .section{position:relative;padding:clamp(2.8rem,6.5vw,5rem) 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .sec-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .sec-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .section h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.75rem,4.2vw,2.85rem);line-height:1.13;letter-spacing:-0.01em}
+  .desc{max-width:62ch;margin-top:1.2rem;color:var(--ink);font-size:1.1rem;font-weight:400;line-height:1.95}
+  .desc + .desc{margin-top:1rem}
+  .desc b{color:var(--accent-soft);font-weight:500}
+  .desc code,.note code,.hero .meta code{font-family:var(--mono);font-size:0.88em;color:var(--accent-soft);background:var(--chip-bg);padding:0.05em 0.35em;border-radius:0.3em;border:1px solid var(--line)}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.2rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.1rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* ── KaTeX math ──────────────────────────────────────────── */
+  .katex{font-size:1.05em}
+  .desc .katex,.note .katex,.elab .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  .formula{margin:1.6rem 0;display:flex;justify-content:center;overflow-x:auto;padding:0.3rem 0}
+  .formula .katex-display{margin:0}
+  .formula .katex-display>.katex{white-space:normal}
+
+  /* ── reveal ──────────────────────────────────────────────── */
+  .reveal{opacity:0;transform:translateY(24px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.1s}.reveal.d2{transition-delay:.22s}.reveal.d3{transition-delay:.34s}
+  .in .reveal{opacity:1;transform:none}
+
+  /* ── facts / chips / steps (reused library) ──────────────── */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.8rem;margin-top:1.6rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.5rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.05em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:0.4rem}
+  .chip{font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg)}
+  .chip.hot{color:var(--accent);border-color:rgba(200,100,60,0.45)}
+  .chip.cool{color:var(--sage);border-color:rgba(127,145,131,0.45)}
+  .steps{display:flex;flex-direction:column;gap:0;margin-top:0.5rem}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.55rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.66rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);min-width:48px;padding:0 0.4rem;height:27px;border-radius:14px;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.68rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc span{display:block;color:var(--ink-dim);font-size:0.92rem;margin-top:0.2rem;line-height:1.7}
+  .step:not(:last-child)::before{content:"";position:absolute;left:23px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+
+  /* ── §2 swap diagram (FFN → experts) ─────────────────────── */
+  .swap{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
+  @media(max-width:620px){.swap{grid-template-columns:1fr}}
+  .swap-tag{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:0.7rem}
+  .swap-tag.hot{color:var(--accent)}
+  .blk{border:1px solid var(--line-strong);border-radius:12px;padding:0.75rem;background:var(--box-bg);display:flex;flex-direction:column;gap:0.6rem}
+  .lyr{border:1px solid var(--line);border-radius:8px;padding:0.7rem 0.8rem;font-family:var(--sans);font-size:0.92rem;color:var(--ink);background:var(--chip-bg);text-align:center}
+  .lyr span{display:block;font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);margin-top:0.25rem;letter-spacing:0.04em}
+  .lyr.attn{border-color:rgba(127,145,131,0.4);color:var(--sage)}
+  .lyr.ffn-one{border-color:rgba(200,100,60,0.35);border-style:dashed}
+  .moe-part{border:1px dashed rgba(200,100,60,0.4);border-radius:8px;padding:0.6rem;display:flex;flex-direction:column;gap:0.55rem}
+  .rtr{font-family:var(--mono);font-size:0.66rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent);text-align:center}
+  .exps{display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem}
+  .exp{height:34px;border-radius:6px;border:1px solid var(--line);background:var(--chip-bg);display:grid;place-items:center;font-family:var(--mono);font-size:0.64rem;color:var(--ink-faint)}
+  .exp.lit{border-color:var(--accent);background:rgba(200,100,60,0.16);color:var(--accent-soft)}
+
+  /* ── §4 routing figure ───────────────────────────────────── */
+  .route-tokens{display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.2rem}
+  .tk{cursor:pointer;font-family:var(--mono);font-size:0.9rem;border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.4rem 0.95rem;background:var(--chip-bg);color:var(--ink-dim);transition:all .3s}
+  .tk:hover{border-color:var(--accent-soft);color:var(--ink)}
+  .tk.on{border-color:var(--accent);color:var(--accent);background:rgba(200,100,60,0.12)}
+  .erow{display:flex;align-items:center;gap:0.8rem;padding:0.22rem 0;transition:opacity .4s}
+  .erow .elab{font-family:var(--mono);font-size:0.74rem;width:34px;flex:none;color:var(--ink-dim);transition:color .3s}
+  .erow .ebar{flex:1;height:11px;background:var(--line-strong);border-radius:6px;overflow:hidden;position:relative}
+  .erow .ebar i{position:absolute;inset:0 auto 0 0;width:0;background:var(--ink-faint);border-radius:6px;transition:width .7s cubic-bezier(.16,1,.3,1),background .4s}
+  .erow .epct{font-family:var(--mono);font-size:0.72rem;width:40px;text-align:right;flex:none;color:var(--ink-faint)}
+  .erow.dim{opacity:0.42}
+  .erow.r1 .ebar i{background:linear-gradient(90deg,var(--accent),var(--accent-soft))}
+  .erow.r1 .elab{color:var(--accent)}
+  .erow.r2 .ebar i{background:var(--sage)}
+  .erow.r2 .elab{color:var(--sage)}
+  .route-out{margin-top:1.4rem;padding-top:1.2rem;border-top:1px dashed var(--line)}
+  .route-out .formula{margin:0.3rem 0 0;justify-content:flex-start;min-height:2.1em;align-items:center}
+
+  /* ── §5 capacity gauges ──────────────────────────────────── */
+  .gauge{display:flex;flex-direction:column;gap:1.05rem}
+  .grow .glab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.72rem;margin-bottom:0.4rem}
+  .grow .glab b{color:var(--ink);font-weight:500}
+  .grow .glab .gv{color:var(--ink-faint)}
+  .grow .glab .gv u{text-decoration:none;color:var(--accent-soft)}
+  .gtrack{position:relative;height:28px;border:1px solid var(--line-strong);border-radius:6px;background:var(--box-bg);overflow:hidden}
+  .gfill{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-soft));border-radius:5px;transition:width 1.2s cubic-bezier(.16,1,.3,1)}
+  .in .gfill{width:var(--w)}
+
+  /* ── §6 load-balance histogram ───────────────────────────── */
+  .hist{position:relative;display:flex;align-items:flex-end;gap:0.5rem;height:200px;padding-top:6px}
+  .hbar{flex:1;border-radius:4px 4px 0 0;background:linear-gradient(180deg,var(--accent),var(--accent-soft));min-height:3px;transition:height .8s cubic-bezier(.16,1,.3,1),background .5s}
+  .hist.bal .hbar{background:linear-gradient(180deg,var(--sage),rgba(127,145,131,0.55))}
+  .hideal{position:absolute;left:0;right:0;bottom:12.5%;border-top:1px dashed var(--line-strong)}
+  .hideal span{position:absolute;right:0;top:-1.5em;font-family:var(--mono);font-size:0.58rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hlabels{display:flex;gap:0.5rem;margin-top:0.5rem}
+  .hlabels span{flex:1;text-align:center;font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint)}
+  .toggle-btn{margin-top:1.3rem;cursor:pointer;background:none;border:1px solid var(--line-strong);color:var(--ink-dim);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;padding:0.6rem 1.2rem;border-radius:1.4rem;transition:all .4s}
+  .toggle-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ── §7 expert-fingerprint chips ─────────────────────────── */
+  .fingerprint{display:flex;flex-wrap:wrap;gap:0.45rem}
+  .ftk{font-family:var(--mono);font-size:0.82rem;padding:0.35rem 0.6rem;border-radius:0.4rem;border:1px solid var(--line);background:var(--chip-bg)}
+  .ftk.e-a{color:var(--accent);border-color:rgba(200,100,60,0.45)}
+  .ftk.e-b{color:var(--sage);border-color:rgba(127,145,131,0.45)}
+  .ftk.e-c{color:var(--accent-soft);border-color:rgba(224,160,127,0.4)}
+  .fp-key{display:flex;flex-wrap:wrap;gap:0.4rem 1.3rem;margin-top:1rem;font-family:var(--mono);font-size:0.64rem;color:var(--ink-faint)}
+  .fp-key i{font-style:normal;margin-right:0.4rem}
+  .fp-key .k-a i{color:var(--accent)} .fp-key .k-b i{color:var(--sage)} .fp-key .k-c i{color:var(--accent-soft)}
+
+  /* ── §8 DeepSeekMoE diagram ──────────────────────────────── */
+  .dsmoe{display:flex;flex-direction:column;align-items:center;gap:0.7rem}
+  .ds-tok{font-family:var(--mono);font-size:0.8rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.4rem 1rem;background:var(--chip-bg)}
+  .ds-arrow{font-family:var(--mono);color:var(--ink-faint);font-size:0.9rem}
+  .ds-row{display:flex;gap:0.9rem;flex-wrap:wrap;justify-content:center;width:100%}
+  .ds-shared{border:1px solid var(--accent);border-radius:8px;padding:0.7rem 0.9rem;background:rgba(200,100,60,0.1);text-align:center;min-width:108px}
+  .ds-shared b{display:block;color:var(--accent-soft);font-size:0.92rem;font-weight:500}
+  .ds-shared span{display:block;font-family:var(--mono);font-size:0.56rem;color:var(--accent);letter-spacing:0.06em;margin-top:0.3rem;text-transform:uppercase}
+  .ds-fine{flex:1;min-width:200px;border:1px dashed var(--line-strong);border-radius:8px;padding:0.7rem}
+  .ds-fine .lbl{font-family:var(--mono);font-size:0.56rem;color:var(--ink-faint);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.55rem;text-align:center}
+  .ds-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:0.34rem}
+  .ds-cell{height:24px;border-radius:4px;border:1px solid var(--line);background:var(--chip-bg)}
+  .ds-cell.lit{border-color:var(--sage);background:rgba(127,145,131,0.28)}
+
+  /* ── §9 expert parallelism ───────────────────────────────── */
+  .a2a{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);text-align:center;padding:0.5rem 0}
+  .gpus{display:grid;grid-template-columns:repeat(4,1fr);gap:0.7rem}
+  @media(max-width:560px){.gpus{grid-template-columns:repeat(2,1fr)}}
+  .gpu{border:1px solid var(--line-strong);border-radius:10px;padding:0.7rem 0.6rem;background:var(--box-bg);text-align:center}
+  .gpu .gname{font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);letter-spacing:0.08em;margin-bottom:0.5rem;text-transform:uppercase}
+  .gpu .ge{border:1px solid var(--line);border-radius:5px;padding:0.35rem;font-family:var(--mono);font-size:0.64rem;color:var(--accent-soft);background:var(--chip-bg);margin-bottom:0.34rem}
+  .gpu .ge:last-child{margin-bottom:0}
+
+  /* ── §10 ledger ──────────────────────────────────────────── */
+  .ledger{display:grid;grid-template-columns:1fr 1fr;gap:0 1.6rem;margin-top:0.5rem}
+  @media(max-width:600px){.ledger{grid-template-columns:1fr;gap:1.4rem}}
+  .ledger h4{font-family:var(--mono);font-size:0.68rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:0.7rem;padding-bottom:0.5rem;border-bottom:1px solid var(--line)}
+  .ledger .plus h4{color:var(--sage)} .ledger .minus h4{color:var(--accent)}
+  .ledger ul{list-style:none}
+  .ledger li{font-size:0.95rem;color:var(--ink);padding:0.55rem 0 0.55rem 1.2rem;position:relative;border-bottom:1px dashed var(--line);line-height:1.65}
+  .ledger li:last-child{border-bottom:none}
+  .ledger li b{color:var(--accent-soft);font-weight:500}
+  .ledger li::before{content:"";position:absolute;left:0;top:1.05em;width:6px;height:6px;border-radius:50%}
+  .ledger .plus li::before{background:var(--sage)} .ledger .minus li::before{background:var(--accent)}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:32ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.hero .kicker,.hero h1 .l,.hero .sub,.hero-formula,.hero .meta{opacity:1!important}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+  <div class="read-bar" id="readBar"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">混合专家 · <b>MoE</b></div>
+    </div>
+    <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <div class="kicker">原理手记 · 混合专家 Mixture of Experts</div>
+      <h1>
+        <span class="l">一屋子专家，</span>
+        <span class="l">每次只<em>点亮两个</em>。</span>
+      </h1>
+      <p class="sub">把臃肿的前馈层拆成许多个小<b>专家</b>（expert），再加一个<b>分诊台</b>（router）：每个 token 只惊动其中一两个。于是总参数可以涨十倍，单次算力却几乎不动——<code>总参数</code>（容量）和<code>活跃参数</code>（算力）从此解绑。</p>
+      <div class="hero-formula">
+        <div class="formula" id="heroFormula"></div>
+        <div class="legend">
+          <span class="lq"><b>g<sub>i</sub>(x)</b> 路由权重</span>
+          <span class="lk"><b>E<sub>i</sub>(x)</b> 第 i 个专家</span>
+          <span class="lv"><b>𝒯</b> Top-k 选中的专家集合</span>
+        </div>
+      </div>
+      <div class="meta">
+        <div><b>47B</b>Mixtral 总参数</div>
+        <div><b>13B</b>每 token 活跃</div>
+        <div><b>8 选 2</b>专家路由</div>
+      </div>
+    </section>
+
+    <!-- 01 -->
+    <section class="section" id="s1">
+      <div class="sec-head reveal"><span class="sec-no">01</span><span class="sec-en">The Thesis · Decoupling</span></div>
+      <h2 class="reveal d1">把"什么都会"换成"各有所长"</h2>
+      <p class="desc reveal d1">Scaling law 说模型越大越聪明。可问题在于：<b>稠密</b>（dense）模型里，每多一个参数，都要在<b>每个 token、每次前向</b>上付一次算力。参数与算力被死死绑在一起——想要十倍知识，就得付十倍计算。</p>
+      <p class="desc reveal d1">混合专家做的事，一句话：<b>把总参数和单次算力解耦</b>。它把最吃参数的那一层拆成许多个小专家，再加一个分诊台，让每个 token 只去找其中一两个。于是参数可以铺得很大（这是容量），而一个 token 实际惊动的计算几乎不变（这是算力）。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">两个数字，一辈子要分清</div>
+        <div class="facts">
+          <div class="fact"><b>总参数</b><span>Total · 决定知识容量</span></div>
+          <div class="fact"><b>活跃参数</b><span>Active · 决定单次算力</span></div>
+        </div>
+        <div class="note"><b>例：</b>Mixtral 8x7B 总参数 46.7B，但每个 token 只走约 12.9B——推理成本像个 13B 的小模型，肚子里却装着 47B 的知识。MoE 的全部魅力，就是把这两个数字拉开。</div>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section class="section" id="s2">
+      <div class="sec-head reveal"><span class="sec-no">02</span><span class="sec-en">Where It Sits · The FFN</span></div>
+      <h2 class="reveal d1">被替换的，只是那一块前馈层</h2>
+      <p class="desc reveal d1">回忆一个 Transformer block：<b>自注意力</b>（attention）+ <b>前馈层</b>（FFN / MLP）。FFN 先把维度从 \(d\) 升到 \(4d\)、过一个激活，再压回 \(d\)。它通常吃掉一个 block 里<b>约三分之二</b>的参数（注意力四个投影约 \(4d^2\)，FFN 约 \(8d^2\)）。</p>
+      <p class="desc reveal d1">MoE 只动 FFN 这一块：把<b>一个</b> FFN 换成 <b>\(N\) 个并排的 FFN</b>（每个叫一个 expert），外加一个 <b>router</b>。注意力照旧人人都过、参数共享。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">同一个 block，FFN 那一格炸开成一排专家</div>
+        <div class="swap">
+          <div class="swap-col">
+            <div class="swap-tag">Dense · 稠密</div>
+            <div class="blk">
+              <div class="lyr attn">自注意力<span>Attention</span></div>
+              <div class="lyr ffn-one">前馈层 FFN<span>1 个 · 每个 token 都过</span></div>
+            </div>
+          </div>
+          <div class="swap-col">
+            <div class="swap-tag hot">MoE · 混合专家</div>
+            <div class="blk">
+              <div class="lyr attn">自注意力<span>不变 · 共享</span></div>
+              <div class="moe-part">
+                <div class="rtr">Router 分诊</div>
+                <div class="exps">
+                  <div class="exp">E1</div><div class="exp lit">E2</div><div class="exp">E3</div><div class="exp">E4</div>
+                  <div class="exp">E5</div><div class="exp">E6</div><div class="exp lit">E7</div><div class="exp">E8</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="note">算笔账：\(d=4096\) 时一个 FFN \(\approx 8d^2 \approx\) <b>1.34 亿</b>参数（Mixtral 用 SwiGLU 三矩阵、\(d_{\text{ff}}=14336\)，约 1.76 亿）。换成 8 个专家，参数 ×8，但<b>每个 token 只跑 2 个</b>——容量涨数倍，算力没动。</div>
+      </div>
+    </section>
+
+    <!-- 03 -->
+    <section class="section" id="s3">
+      <div class="sec-head reveal"><span class="sec-no">03</span><span class="sec-en">The Router · Gating</span></div>
+      <h2 class="reveal d1">路由器：谁来接这个 token</h2>
+      <p class="desc reveal d1">router 是个<b>极小的线性层</b>。对 token 的隐藏向量 \(x\)，乘上一个矩阵 \(W_g\) 得到 \(N\) 个分数（logits），再 softmax 成"路由概率"。这是 MoE 唯一新增的"决策器官"，参数量只占模型的零头。</p>
+      <div class="formula reveal d2">\[ g(x)=\operatorname{softmax}\!\big(x\,\htmlClass{m-q}{W_g}\big),\qquad \htmlClass{m-q}{W_g}\in\mathbb{R}^{\,d\times N} \]</div>
+      <p class="desc reveal d1">\(g(x)\) 是一个长度为 \(N\) 的概率向量：它对每个专家给出一个"我有多想把这个 token 交给你"的权重。它<b>逐 token</b> 算一次——同一句话里不同的字，会得到不同的分诊结果。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">8 个专家的一次打分（token：猫）</div>
+        <div class="chips">
+          <span class="chip">E1 · 0.02</span><span class="chip">E2 · 0.05</span><span class="chip hot">E3 · 0.63</span><span class="chip">E4 · 0.01</span>
+          <span class="chip">E5 · 0.03</span><span class="chip">E6 · 0.02</span><span class="chip cool">E7 · 0.22</span><span class="chip">E8 · 0.02</span>
+        </div>
+        <div class="note">3 号专家最被看好（0.63），7 号次之（0.22）。下一步，只有这两个会真的干活。</div>
+      </div>
+    </section>
+
+    <!-- 04 -->
+    <section class="section" id="s4">
+      <div class="sec-head reveal"><span class="sec-no">04</span><span class="sec-en">Top-k · Sparse Activation</span></div>
+      <h2 class="reveal d1">Top-2：只叫醒前两名</h2>
+      <p class="desc reveal d1">取分数最高的 \(k\) 个专家（Mixtral 取 <b>top-2</b>；Switch Transformer 干脆 <b>top-1</b>），其余全部丢弃，再把留下的两个<b>重新归一化</b>。最终输出是这几个专家输出的加权和：</p>
+      <div class="formula reveal d2">\[ y=\sum_{i\in\mathcal{T}}\frac{\htmlClass{m-q}{g_i(x)}}{\sum_{j\in\mathcal{T}}\htmlClass{m-q}{g_j(x)}}\;\htmlClass{m-k}{E_i(x)},\qquad \mathcal{T}=\mathrm{TopK}\big(g(x),\,k\big) \]</div>
+      <p class="desc reveal d1">对 "猫" 来说：top-2 是 \(E_3(0.63)\) 与 \(E_7(0.22)\)，归一化成 \(0.74\) 与 \(0.26\)。剩下 6 个专家对这个 token <b>一次都没跑</b>。换一个 token，被点亮的就是另外两个——<b>试着点下面不同的字</b>。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · 点一个 token，看它被分诊到哪两个专家</div>
+        <div class="route-tokens" id="routeTokens">
+          <button class="tk on" data-tok="猫">猫</button>
+          <button class="tk" data-tok="很">很</button>
+          <button class="tk" data-tok="累">累</button>
+          <button class="tk" data-tok="。">。</button>
+        </div>
+        <div class="route-grid" id="routeGrid"></div>
+        <div class="route-out">
+          <div class="viz-cap" style="margin-bottom:.4rem">这个 token 的最终输出</div>
+          <div class="formula" id="routeEq"></div>
+        </div>
+        <div class="note">路由是 <b>逐 token、逐层</b> 的：标点 "。" 几乎总被同一个专家接走，而实词在层与层之间被反复重新分诊。真正决定算力的，是<b>活跃参数</b>——Mixtral 32 层 × 每层 2 个专家，合计约 12.9B。</div>
+      </div>
+    </section>
+
+    <!-- 05 -->
+    <section class="section" id="s5">
+      <div class="sec-head reveal"><span class="sec-no">05</span><span class="sec-en">Almost Free · Compute vs Capacity</span></div>
+      <h2 class="reveal d1">为什么这几乎是免费的午餐</h2>
+      <p class="desc reveal d1">如果你把 8 个专家<b>全跑</b>（那就是稠密），算力是 \(8\times\text{FFN}\)。而 MoE top-2 永远只有 \(2\times\text{FFN}\) 的算力——<b>无论你加到多少个专家</b>。</p>
+      <div class="formula reveal d2">\[ \text{FLOPs}_{\text{token}}\;\propto\; k\cdot\text{FFN} \]</div>
+      <p class="desc reveal d1">关键的非对称就在这里：每 token 的算力只跟 \(k\) 有关，<b>与专家总数 \(N\) 无关</b>。于是你可以一路加专家（加容量），单次思考成本却纹丝不动。下面这些真实模型，把"总参数"拉成长长一条，而"活跃参数"只占其中一小截。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">每条 = 一个模型的总参数；高亮段 = 一个 token 实际点亮的活跃参数</div>
+        <div class="gauge">
+          <div class="grow">
+            <div class="glab"><b>Mixtral 8x7B</b><span class="gv">活跃 <u>12.9B</u> / 总 46.7B · 8 选 2</span></div>
+            <div class="gtrack"><div class="gfill" style="--w:28%"></div></div>
+          </div>
+          <div class="grow">
+            <div class="glab"><b>GLaM</b><span class="gv">活跃 <u>~97B</u> / 总 1.2T · 64 选 2</span></div>
+            <div class="gtrack"><div class="gfill" style="--w:8%"></div></div>
+          </div>
+          <div class="grow">
+            <div class="glab"><b>DeepSeek-V3</b><span class="gv">活跃 <u>37B</u> / 总 671B · 256(+1) 选 8</span></div>
+            <div class="gtrack"><div class="gfill" style="--w:5.5%"></div></div>
+          </div>
+        </div>
+        <div class="note">Switch Transformer 把这条路推到 <b>1.6 万亿</b>参数 / 2048 个专家（top-1）；GLaM 用 1.2T 参数训练，能耗约只有 GPT-3 的 <b>1/3</b>、每 token 推理 FLOPs 约一半。代价埋在下一节：全部专家都得<b>常驻显存</b>，哪怕大多在睡觉。</div>
+      </div>
+    </section>
+
+    <!-- 06 -->
+    <section class="section" id="s6">
+      <div class="sec-head reveal"><span class="sec-no">06</span><span class="sec-en">It Collapses · Load Balancing</span></div>
+      <h2 class="reveal d1">路由会塌缩：负载均衡</h2>
+      <p class="desc reveal d1">放任不管，router 会<b>自我强化地塌缩</b>：少数热门专家拿走几乎所有 token，越被选中越被训练得好，越好就越被选中；剩下的专家<b>饿死</b>，永远学不到东西。典型的赢家通吃。第一件武器是一条<b>辅助负载均衡损失</b>（auxiliary load-balancing loss），轻轻把分布压平：</p>
+      <div class="formula reveal d2">\[ \mathcal{L}_{\text{aux}}=\alpha\,N\sum_{i=1}^{N} \htmlClass{m-q}{f_i}\,\htmlClass{m-k}{P_i} \]</div>
+      <p class="desc reveal d1">其中 \(\htmlClass{m-q}{f_i}\) 是<b>实际</b>被分到专家 \(i\) 的 token 比例（硬计数），\(\htmlClass{m-k}{P_i}=\frac{1}{T}\sum_t g_i(x_t)\) 是 router 给它的<b>平均概率</b>（软）。两者都均匀（\(=1/N\)）时这个乘积最小——它专门惩罚"既拿得多、又给得自信"的专家。\(\alpha\) 一般取 \(0.01\)：推一下就好，别盖过主损失。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · 8 个专家分到的 token 比例</div>
+        <div class="hist" id="hist">
+          <div class="hideal"><span>理想 12.5%</span></div>
+        </div>
+        <div class="hlabels"><span>E1</span><span>E2</span><span>E3</span><span>E4</span><span>E5</span><span>E6</span><span>E7</span><span>E8</span></div>
+        <button class="toggle-btn" id="histBtn">▶ 加上负载均衡损失</button>
+        <div class="note">第二件武器是<b>专家容量</b>（expert capacity）：给每个专家一个固定缓冲区 \(\text{capacity}=f_{\text{cap}}\cdot\frac{T}{N}\)（容量因子 \(f_{\text{cap}}\) 常取 1.0–1.25）。超出的 token 直接<b>丢弃</b>（drop）、只走残差。丢 token 听着可怕，换来的是整齐、可批处理的 GPU 计算。还可叠一条 <b>router z-loss</b> \(\big(\log\sum_i e^{(xW_g)_i}\big)^2\) 约束 logit 别爆，稳住训练。前沿做法更进一步：DeepSeek-V3 用一个可调<b>偏置项</b>做无辅助损失（auxiliary-loss-free）的均衡，绕开 aux loss 对质量的拖累。</div>
+      </div>
+    </section>
+
+    <!-- 07 -->
+    <section class="section" id="s7">
+      <div class="sec-head reveal"><span class="sec-no">07</span><span class="sec-en">What Do Experts Specialize In?</span></div>
+      <h2 class="reveal d1">专家到底在分什么工</h2>
+      <p class="desc reveal d1">"专家"这个名字容易让人误会：你大概会以为 E3 管医学、E7 管法律。可 Mixtral 团队真的去看了路由，结论出人意料——专家分工<b>更像语法/位置层面，而非话题层面</b>。同一篇文章里数学和生物的 token 路由分布几乎一样；真正稳定的规律是<b>结构性</b>的：缩进、标点、连续重复的 token 常被同一个专家接走，相邻位置也倾向走同一个专家。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">示意 · 按"被分到哪个专家"给 token 上色</div>
+        <div class="fingerprint">
+          <span class="ftk e-a">def</span><span class="ftk e-c">　</span><span class="ftk e-b">add</span><span class="ftk e-c">(</span><span class="ftk e-b">x</span><span class="ftk e-c">,</span><span class="ftk e-c">　</span><span class="ftk e-b">y</span><span class="ftk e-c">)</span><span class="ftk e-c">:</span><span class="ftk e-a">return</span><span class="ftk e-b">x</span><span class="ftk e-c">+</span><span class="ftk e-b">y</span>
+        </div>
+        <div class="fp-key">
+          <span class="k-a"><i>■</i>关键词 / 行首</span>
+          <span class="k-b"><i>■</i>标识符</span>
+          <span class="k-c"><i>■</i>标点 / 空白</span>
+        </div>
+        <div class="note">所以别把专家想成"领域学者"，更像一群按<b>位置与句法</b>分工的工人。这也解释了为什么把它们硬塞进"按学科切"的直觉里总不对劲——分诊台学到的，是数据里更廉价、更普适的统计规律。</div>
+      </div>
+    </section>
+
+    <!-- 08 -->
+    <section class="section" id="s8">
+      <div class="sec-head reveal"><span class="sec-no">08</span><span class="sec-en">Smarter Experts · Shared & Fine-grained</span></div>
+      <h2 class="reveal d1">更聪明的专家：共享 + 细粒度</h2>
+      <p class="desc reveal d1">Mixtral 之后，DeepSeekMoE 给出两个升级。<b>细粒度专家</b>（fine-grained）：把每个专家切成更小的几个、然后多选几个——比如不用"8 选 2"，改成 <b>"64 选 8"</b>。活跃参数预算不变，但<b>组合数爆炸</b>，路由更灵活、单个专家能更专一。</p>
+      <p class="desc reveal d1"><b>共享专家</b>（shared expert）：留一两个<b>永远激活</b>、人人都过的专家，专门兜住"通用常识"，让被路由的专家腾出手去真正专精。DeepSeek-V2（236B / 21B 活跃）、V3（671B / 37B 活跃，256 个路由专家 + 1 个共享，top-8）都用这套组合。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">每个 token = 1 个常驻共享专家 + 路由选中的若干细粒度专家</div>
+        <div class="dsmoe">
+          <div class="ds-tok">token x</div>
+          <div class="ds-arrow">↓</div>
+          <div class="ds-row">
+            <div class="ds-shared"><b>共享专家</b><span>Always-on</span></div>
+            <div class="ds-fine">
+              <div class="lbl">细粒度路由专家 · 选中 8 个</div>
+              <div class="ds-grid" id="dsGrid"></div>
+            </div>
+          </div>
+        </div>
+        <div class="note">直觉：共享专家把"大家都要的基础功"集中学一遍，省得每个路由专家都重复造一遍轮子；细粒度则让"分工"这件事有更高分辨率。两招叠加，同样的活跃参数能榨出更高质量。</div>
+      </div>
+    </section>
+
+    <!-- 09 -->
+    <section class="section" id="s9">
+      <div class="sec-head reveal"><span class="sec-no">09</span><span class="sec-en">Across Devices · Expert Parallelism</span></div>
+      <h2 class="reveal d1">铺到多张卡上：专家并行</h2>
+      <p class="desc reveal d1">当全部专家装不进一张卡，就把<b>不同专家放到不同 GPU</b>（expert parallelism）。于是前向多了两次跨卡搬运：路由决定每个 token 该去哪 → <b>all-to-all</b> 把 token 发去持有它那个专家的卡 → 专家计算 → 再 <b>all-to-all</b> 发回原处。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">4 张卡各放 2 个专家，token 按路由跨卡飞行</div>
+        <div class="a2a">↓ all-to-all · 把每个 token 分发到它的专家所在卡</div>
+        <div class="gpus">
+          <div class="gpu"><div class="gname">GPU 0</div><div class="ge">E1</div><div class="ge">E2</div></div>
+          <div class="gpu"><div class="gname">GPU 1</div><div class="ge">E3</div><div class="ge">E4</div></div>
+          <div class="gpu"><div class="gname">GPU 2</div><div class="ge">E5</div><div class="ge">E6</div></div>
+          <div class="gpu"><div class="gname">GPU 3</div><div class="ge">E7</div><div class="ge">E8</div></div>
+        </div>
+        <div class="a2a">↑ all-to-all · 把算完的结果送回每个 token 的原始位置</div>
+        <div class="note">这两次 all-to-all 才是 MoE 真正的系统开销，也是<b>负载均衡更重要的第二个理由</b>：某张卡上的专家被挤爆，<b>全队都得等它</b>。所以训练时的 aux loss、推理时的容量上限，既为了质量，也为了让这群 GPU 步调一致。</div>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="section" id="s10">
+      <div class="sec-head reveal"><span class="sec-no">10</span><span class="sec-en">The Ledger · Trade-offs & Timeline</span></div>
+      <h2 class="reveal d1">一份账本，一条来路</h2>
+      <p class="desc reveal d1">MoE 不是免费的，它是一笔<b>清晰的交易</b>：用显存、训练复杂度和通信，换固定算力下更大的容量。什么时候该签这笔单？当你被<b>算力 / 延迟</b>卡住、但<b>显存还算富裕</b>、且想要更大容量时——这正是当下前沿大模型大多选 MoE 的原因。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">这笔交易，两边各记一笔</div>
+        <div class="ledger">
+          <div class="plus">
+            <h4>赚到</h4>
+            <ul>
+              <li>固定推理算力下灌进<b>数倍参数</b>与知识</li>
+              <li>同等质量训练更省 FLOPs（GLaM ≈ <b>1/3 能耗</b>）</li>
+              <li>专家自然分工、各自专精</li>
+              <li>加容量 ≠ 加延迟，扩展曲线更友好</li>
+            </ul>
+          </div>
+          <div class="minus">
+            <h4>付出</h4>
+            <ul>
+              <li><b>显存吃满</b>：全部专家都要常驻，哪怕在睡觉</li>
+              <li>训练更难调：路由塌缩、负载、不稳定</li>
+              <li>跨卡 <b>all-to-all 通信</b>开销</li>
+              <li>批内 token 走不同专家，推理实现更复杂；小 batch 利用率低</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="viz reveal d2">
+        <div class="viz-cap">一条来路 · 稀疏 MoE 的关键节点</div>
+        <div class="steps">
+          <div class="step"><span class="si">2017</span><div class="sc"><b>Outrageously Large Neural Networks</b><em>Shazeer 等</em><span>在 LSTM 上首次落地稀疏门控 MoE，提出 noisy top-k gating——MoE 的源头。</span></div></div>
+          <div class="step"><span class="si">2020</span><div class="sc"><b>GShard</b><em>Google</em><span>把 MoE 搬上 Transformer，600B 参数翻译模型，确立专家容量与 dispatch 机制。</span></div></div>
+          <div class="step"><span class="si">2021</span><div class="sc"><b>Switch Transformer · GLaM</b><em>Google</em><span>Switch 简化到 top-1，冲到 1.6T 参数；GLaM 用 1.2T / 64 专家 top-2，能耗约 GPT-3 的 1/3。</span></div></div>
+          <div class="step"><span class="si">2023</span><div class="sc"><b>Mixtral 8x7B</b><em>Mistral</em><span>开源 MoE 真正落地：8 专家 top-2，47B 总 / 13B 活跃，质量比肩更大的稠密模型。</span></div></div>
+          <div class="step"><span class="si">2024</span><div class="sc"><b>DeepSeek-V2 / V3</b><em>DeepSeek</em><span>细粒度 + 共享专家，V3 做到 671B / 37B 活跃，并用无辅助损失的偏置项做负载均衡。</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Field Note</div>
+      <h3>把"一个什么都会的大脑"，换成"一屋子各有所长的专家 + 一个分诊台"——让模型在不增加单次思考成本的前提下，装下多得多的知识。</h3>
+      <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  // ── reading progress bar ──
+  const readBar=document.getElementById('readBar');
+  let ticking=false;
+  function onScroll(){
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const h=document.documentElement, max=h.scrollHeight-h.clientHeight;
+      readBar.style.width=(max>0?(h.scrollTop/max*100):0)+'%';
+      ticking=false;
+    });
+  }
+  window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  // ── reveal on scroll (editorial: add .in when a section enters view) ──
+  const io=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('in'); });
+  },{threshold:0.12,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.hero,.section').forEach(s=>io.observe(s));
+
+  // ── §2 swap diagram: random-ish two lit experts already in markup ──
+
+  // ── §4 routing figure ──
+  const ROUTE={
+    '猫':[0.02,0.05,0.63,0.01,0.03,0.02,0.22,0.02],
+    '很':[0.04,0.31,0.06,0.08,0.05,0.28,0.10,0.08],
+    '累':[0.10,0.05,0.07,0.40,0.06,0.04,0.05,0.23],
+    '。':[0.02,0.02,0.03,0.02,0.78,0.02,0.02,0.09]
+  };
+  const routeGrid=document.getElementById('routeGrid');
+  const rows=[];
+  for(let i=0;i<8;i++){
+    const r=document.createElement('div'); r.className='erow';
+    r.innerHTML=`<span class="elab">E${i+1}</span><span class="ebar"><i></i></span><span class="epct">0.00</span>`;
+    routeGrid.appendChild(r); rows.push(r);
+  }
+  let curTok='猫';
+  function updateRoute(tok){
+    curTok=tok;
+    const p=ROUTE[tok];
+    // find top-2
+    const order=p.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+    const a=order[0][1], b=order[1][1];
+    rows.forEach((r,i)=>{
+      r.querySelector('i').style.width=(p[i]*100).toFixed(0)+'%';
+      r.querySelector('.epct').textContent=p[i].toFixed(2);
+      r.classList.toggle('r1',i===a);
+      r.classList.toggle('r2',i===b);
+      r.classList.toggle('dim',i!==a&&i!==b);
+    });
+    const s=p[a]+p[b], w1=(p[a]/s), w2=(p[b]/s);
+    const eqEl=document.getElementById('routeEq');
+    if(window.katex){
+      katex.render(
+        `\\htmlClass{m-v}{y}=${w1.toFixed(2)}\\,\\htmlClass{m-q}{E_{${a+1}}}(x)\\;+\\;${w2.toFixed(2)}\\,\\htmlClass{m-k}{E_{${b+1}}}(x)`,
+        eqEl,{displayMode:true,throwOnError:false,trust:true,strict:false}
+      );
+    }
+    document.querySelectorAll('#routeTokens .tk').forEach(t=>t.classList.toggle('on',t.dataset.tok===tok));
+  }
+  document.getElementById('routeTokens').addEventListener('click',(e)=>{
+    const btn=e.target.closest('.tk'); if(!btn) return; updateRoute(btn.dataset.tok);
+  });
+
+  // ── §6 load-balance histogram ──
+  const COLLAPSED=[58,22,8,5,3,2,1,1], BALANCED=[14,13,12,13,12,13,11,12];
+  const histEl=document.getElementById('hist'), histBtn=document.getElementById('histBtn');
+  const hbars=[];
+  for(let i=0;i<8;i++){ const d=document.createElement('div'); d.className='hbar'; histEl.appendChild(d); hbars.push(d); }
+  let balanced=false;
+  function drawHist(){
+    const data=balanced?BALANCED:COLLAPSED;
+    hbars.forEach((b,i)=>{ b.style.height=(data[i]*1.55)+'%'; });
+    histEl.classList.toggle('bal',balanced);
+    histBtn.textContent=balanced?'◀ 去掉损失，看它塌缩':'▶ 加上负载均衡损失';
+  }
+  histBtn.addEventListener('click',()=>{ balanced=!balanced; drawHist(); });
+  drawHist();
+
+  // ── §8 DeepSeekMoE fine-grained grid (16 experts, 8 lit illustrative) ──
+  const dsGrid=document.getElementById('dsGrid');
+  const litSet=new Set([1,3,4,7,9,10,13,15]);
+  for(let i=0;i<16;i++){ const c=document.createElement('div'); c.className='ds-cell'+(litSet.has(i)?' lit':''); dsGrid.appendChild(c); }
+
+  // ── render all math with KaTeX (deferred CDN scripts ready by DOMContentLoaded) ──
+  function renderHero(){
+    const el=document.getElementById('heroFormula');
+    if(!el||!window.katex) return;
+    katex.render(
+      "\\htmlClass{m-v}{y}=\\sum_{i\\,\\in\\,\\mathcal{T}}\\;\\htmlClass{m-q}{g_i(x)}\\,\\cdot\\,\\htmlClass{m-k}{E_i(x)}",
+      el,{displayMode:true,throwOnError:false,trust:true,strict:false}
+    );
+  }
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{
+        renderMathInElement(document.querySelector('main'),{
+          delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+          throwOnError:false,trust:true,strict:false
+        });
+      }catch(e){}
+    }
+    renderHero();
+    updateRoute(curTok);   // renders the dynamic output formula too
+  }
+  if(window.katex&&window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded',renderAllMath);
+})();
+</script>
+</body>
+</html>

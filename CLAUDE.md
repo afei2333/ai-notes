@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A personal **technical blog** — a slowly growing collection of in-depth, interactive explainers
-(in Chinese) about how complex systems actually work. The first article walks through the full
-lifecycle of a large language model; future articles will cover other topics (attention,
-backprop, tokenizers, …), added whenever there's something worth explaining well.
+(in Chinese) about how complex systems actually work. It currently covers the LLM lifecycle,
+attention, backpropagation, the KV cache, the Transformer architecture, and RAG; more articles
+(tokenizers, …) are added whenever there's something worth explaining well.
 
 Two layers:
 
@@ -23,8 +23,12 @@ The repo layout:
 ```
 index.html            # archive cover / table of contents (entry point, stays at root)
 posts/                # all article HTML lives here
-  llm-lifecycle.html
-  attention-mechanism.html
+  llm-lifecycle.html          # 大语言模型的一生
+  attention-mechanism.html    # 注意力机制，逐矩阵拆解
+  backpropagation.html        # 反向传播：梯度如何流动
+  kv-cache.html               # KV 缓存，逐步拆开
+  transformer-architecture.html  # Transformer：一个词向量穿行的塔
+  rag.html                    # RAG：让模型当场翻书
 .claude/              # project skill + skeleton (field-notes-post)
 CLAUDE.md  README.md  LICENSE
 ```
@@ -44,7 +48,7 @@ python3 -m http.server 8000      # then visit http://localhost:8000/
 ```
 
 External dependencies are kept to CDN `<link>`/`<script>` tags only — no build step, no package
-manager. Every page loads **Google Fonts**; **math-heavy posts may also load KaTeX** (see "Rendering
+manager. Every page loads **Google Fonts**; **any post containing math loads KaTeX** (see "Rendering
 math" below). Everything else — styles, animation logic, SVG visuals — is inline. No package manager,
 linter, or test suite exists.
 
@@ -59,10 +63,12 @@ Every page repeats the same foundation, copied inline (there is no shared styles
   `--bg*`, and the `--serif` / `--sans` / `--mono` font vars.
 - **Typography** — Fraunces + Noto Serif SC for headings/display (serif), Noto Sans SC for body,
   IBM Plex Mono for labels, captions, and metadata. Loaded from the same Google Fonts URL.
-- **Rendering math** — do **not** hand-build formulas out of `<sub>`/`<sup>`/Unicode (`ᵀ`, `√`, `ₖ`)
-  or wrap them in mono `<code>`; that mixing is what makes a page's typography look chaotic. Posts
-  with real math load **KaTeX** (CDN css + `katex.min.js` + `auto-render.min.js`, all `defer`) and
-  write math as `\( … \)` (inline) / `\[ … \]` (display). `attention-mechanism.html` is the
+- **Rendering math — KaTeX is mandatory.** **Every** formula or math symbol — even a single inline
+  one (`d`, `√`, a subscript) — **must** be implemented and rendered with **KaTeX**. Never hand-build
+  math out of `<sub>`/`<sup>`/Unicode (`ᵀ`, `√`, `ₖ`) or wrap it in mono `<code>`; that mixing is what
+  makes a page's typography look chaotic. Any post that contains math therefore loads **KaTeX** (CDN
+  css + `katex.min.js` + `auto-render.min.js`, all `defer`) and writes math as `\( … \)` (inline) /
+  `\[ … \]` (display). `attention-mechanism.html` is the
   reference: it calls `renderMathInElement(main, {delimiters, trust:true, strict:false})` from a
   `DOMContentLoaded` handler (the `defer` scripts are ready by then), and renders the hero formula
   explicitly with `katex.render(…, {displayMode:true, trust:true})`, color-coding parts via
@@ -214,8 +220,10 @@ flag (the old `!el.classList.contains('in')` one-time pattern). Instead:
   static final value).
 - Make effects cancellable: track each stage's `setTimeout` / `requestAnimationFrame` handles and
   clear them on reset, so a fast scroll never leaves a half-played animation or a stuck-invisible
-  cell. (`attention-mechanism.html` is the reference implementation: `timers`/`rafs` maps,
-  `clearStage`, `later`, `countUp`.)
+  cell. **The `post-skeleton.html` script already ships this engine** — the enter/leave
+  `IntersectionObserver`, the `timers`/`rafs` maps, and `clearStage` / `later` / `countUp` helpers —
+  so you fill in `runStageEffect(i)` / `resetStageEffect(i)` branches, not the plumbing. (Any
+  published post, e.g. `attention-mechanism.html`, is a worked example if you want one.)
 - The reset's restored state **is** the `prefers-reduced-motion` / no-JS fallback — it must show
   the complete, correct final content on its own.
 

@@ -227,6 +227,13 @@
   }
   .tagchip:hover{border-color:rgba(200,100,60,0.4);color:var(--ink)}
   .tagchip.on{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+  .tagrow [hidden]{display:none}
+  .tagmore{
+    cursor:pointer;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.08em;color:var(--accent);
+    border:1px dashed var(--line-strong);border-radius:0.45rem;padding:0.36rem 0.72rem;
+    background:none;transition:all .35s;
+  }
+  .tagmore:hover{border-color:var(--accent);background:var(--chip-bg)}
   /* entry tags double as filter triggers */
   .e-tags span{cursor:pointer}
   .e-tags span.on{background:var(--accent);border-color:var(--accent)!important;color:var(--bg)}
@@ -362,10 +369,12 @@
       meta:['9 幕拆解','滚动叙事','约 12 分钟']
     },
     {
-      no:'04', status:'soon',
+      no:'04', status:'published', slug:'posts/tokenizer.html', featured:false,
+      kicker:'交互长文 · Interactive',
       title:'Tokenizer：文字与数字之间',
-      dek:'BPE 是怎么把「世界」切成子词的？为什么模型数不清一个单词里有几个字母？从字节到 token 的全过程。',
-      tags:['BPE','分词','编码']
+      dek:'模型不识字，只认整数。BPE 是怎么把「世界」按字节切成子词的？为什么它数不清 strawberry 里有几个 r？跟着一份四个词的玩具语料，连合并循环一格一格地算给你看——从两条死路，到字节级 BPE 为什么再也没有 <UNK>。',
+      tags:['Tokenizer','BPE','分词','子词','字节级'],
+      meta:['10 阶段全流程','滚动叙事','约 12 分钟']
     },
     {
       no:'05', status:'published', slug:'posts/kv-cache.html', featured:false,
@@ -374,6 +383,30 @@
       dek:'LLM 逐字蹦出答案还能这么快，靠的是 KV 缓存——把「每一步重算整段历史」省成「每步只算一个新词」。从自回归的浪费，到「过去的 K、V 永不改变」这一观察，再到 Prefill/Decode、显存代价与 GQA/PagedAttention，跟着一句「猫很累」的生成过程连数字一起算给你看。',
       tags:['KV 缓存','推理优化','注意力','Transformer','显存'],
       meta:['10 步拆解','滚动叙事','约 12 分钟']
+    },
+    {
+      no:'06', status:'published', slug:'posts/transformer-architecture.html', featured:false,
+      kicker:'交互长文 · Interactive',
+      title:'Transformer：一个词向量穿行的塔',
+      dek:'一个词向量上了路，每个子层只是往主干道里读一点、写回一点。跟着 GPT-2 的真实尺寸（768 维、12 头、12 层），看 token embedding、位置编码、多头注意力、残差流、LayerNorm、FFN 如何把一句话算成下一个词，并理清 Encoder / Decoder 三种装配。',
+      tags:['Transformer','架构','残差流','多头注意力','位置编码','FFN'],
+      meta:['12 站全装配','滚动叙事','约 14 分钟']
+    },
+    {
+      no:'07', status:'published', slug:'posts/rag.html', featured:false,
+      kicker:'交互长文 · Interactive',
+      title:'RAG：让模型当场翻书',
+      dek:'你问模型「我们公司年假几天」，它要么说不知道，要么一本正经地编——因为它的记忆是冻结的、压缩过的、还带截止日期。RAG 的主张只有一句：把知识从推理里拆出来，存进随时能换的外部库，用时检索、拼进上下文、再作答。跟着一份三段员工手册，连余弦相似度一起算给你看。',
+      tags:['RAG','检索增强','Embedding','向量检索','幻觉','重排'],
+      meta:['10 阶段全流程','滚动叙事','约 13 分钟']
+    },
+    {
+      no:'08', status:'published', slug:'posts/mixture-of-experts.html', featured:false,
+      kicker:'深度长文 · Interactive',
+      title:'混合专家 MoE：一屋子专家，每次只叫醒两个',
+      dek:'把臃肿的前馈层拆成许多小专家，每个 token 只惊动其中两个——总参数涨十倍，单次算力却几乎不动。从路由打分、Top-2 稀疏激活、负载均衡损失，到共享/细粒度专家与专家并行，连数字一起把 Mixture of Experts 讲清楚。',
+      tags:['MoE','混合专家','稀疏激活','架构','路由','负载均衡'],
+      meta:['10 节 · 编辑式','交互图 + KaTeX','约 16 分钟']
     }
   ];
 
@@ -433,11 +466,35 @@
   // ── build the tag filter row (unique tags, in first-seen order) ──
   const allTags=[];
   POSTS.forEach(p=>p.tags.forEach(t=>{ if(!allTags.includes(t)) allTags.push(t); }));
-  allTags.forEach(t=>{
+  const tagChips=allTags.map(t=>{
     const c=document.createElement('button');
     c.className='tagchip'; c.dataset.tag=t; c.textContent=t;
     tagRow.appendChild(c);
+    return c;
   });
+
+  // ── collapse a long tag row: show the first TAG_LIMIT, fold the rest ──
+  const TAG_LIMIT=10;
+  let tagsExpanded=false;
+  let moreBtn=null;
+  if(allTags.length>TAG_LIMIT){
+    moreBtn=document.createElement('button');
+    moreBtn.type='button'; moreBtn.className='tagmore';
+    moreBtn.addEventListener('click',()=>{ tagsExpanded=!tagsExpanded; refreshTagRow(); });
+    tagRow.appendChild(moreBtn);
+  }
+  function refreshTagRow(){
+    if(!moreBtn) return;
+    let hidden=0;
+    tagChips.forEach((c,i)=>{
+      // always keep an active tag visible, even when collapsed, so it can be cleared
+      const show=tagsExpanded || i<TAG_LIMIT || c.classList.contains('on');
+      c.hidden=!show;
+      if(!show) hidden++;
+    });
+    moreBtn.textContent = tagsExpanded ? '收起 ▴' : `+${hidden} 更多 ▾`;
+    moreBtn.hidden = !tagsExpanded && hidden===0;  // nothing left to fold
+  }
 
   // ── filtering ──
   const entryEls=Array.from(entriesEl.children);
@@ -457,6 +514,7 @@
     document.querySelectorAll('[data-tag]').forEach(elm=>{
       elm.classList.toggle('on', activeTags.has(elm.dataset.tag));
     });
+    refreshTagRow();
     countLbl.innerHTML = activeTags.size||q
       ? `<b>${visible}</b> / ${POSTS.length} 篇`
       : `${POSTS.length} 篇`;

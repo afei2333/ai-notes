@@ -111,13 +111,16 @@ Open the site (e.g. `python3 -m http.server 8000`) and check:
 A post does **not** have to be a scrollytelling journey. Match the form to the topic:
 
 - **Scrollytelling stages** (like `llm-lifecycle.html`) — best when the subject is a *sequential
-  process* with distinct steps. Reveal is scroll-driven via `IntersectionObserver`; per-stage
-  effects fire from `runStageEffect(i)`. ⚠️ **Index-coupling gotcha:** the stages are tied together
-  by 0-based position in several places that must stay in sync — the DOM order of
-  `<article class="stage">`, the `railLabels` array, the hardcoded `00 / NN` total in the topbar,
-  and the `if(i===N)` blocks in `runStageEffect`. Changing the count or order means updating all of
-  them. Build static structure once (small IIFEs at the bottom of the script) and trigger motion
-  from `runStageEffect` keyed to the index.
+  process* with distinct steps. Reveal is scroll-driven via the skeleton's enter/leave
+  `IntersectionObserver`, which **replays** each stage's effect on every scroll-in: it fires
+  `runStageEffect(i)` on enter and `resetStageEffect(i)` on leave (the engine — `timers`/`rafs` +
+  `clearStage` — is already in the skeleton; you just fill the per-index branches). ⚠️
+  **Index-coupling gotcha:** the stages are tied together by 0-based position in several places that
+  must stay in sync — the DOM order of `<article class="stage">`, the `railLabels` array, the
+  hardcoded `00 / NN` total in the topbar, and the `if(i===N)` blocks in **both** `runStageEffect`
+  **and** `resetStageEffect`. Changing the count or order means updating all of them. Build static
+  structure once (small IIFEs at the bottom of the script) and trigger motion from `runStageEffect`
+  keyed to the index.
 - **Plain editorial article** — for shorter or non-sequential explainers, a straightforward flow of
   serif headings + `.desc` prose + `.viz` figures is perfect, and avoids the index-coupling burden.
   Reuse the same component classes so it still reads as the blog.

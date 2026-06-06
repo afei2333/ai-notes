@@ -10,8 +10,12 @@
 ```
 index.html            # archive 封面 / 目录，入口文件，留在根目录
 posts/                # 所有文章 HTML
-  llm-lifecycle.html        # 大语言模型的一生
-  attention-mechanism.html  # 注意力机制，逐矩阵拆解
+  llm-lifecycle.html             # 大语言模型的一生
+  attention-mechanism.html       # 注意力机制，逐矩阵拆解
+  backpropagation.html           # 反向传播：梯度如何流动
+  kv-cache.html                  # KV 缓存，逐步拆开
+  transformer-architecture.html  # Transformer：一个词向量穿行的塔
+  rag.html                       # RAG：让模型当场翻书
 .claude/              # field-notes-post 写作 skill 与骨架模板
 CLAUDE.md             # 给协作者 / Claude Code 的约定与说明
 ```

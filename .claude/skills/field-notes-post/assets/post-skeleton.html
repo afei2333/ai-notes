@@ -12,8 +12,11 @@
     2. railLabels[] in the script  ← must match the stage count & order
     3. the progress total  (  / NN  in the topbar)  ← = number of stages
     4. one <article class="stage"> per step; keep the stage skeleton
-    5. runStageEffect(i) — fire each stage's animation, keyed to 0-based index
-  Everything else (engine, theme, rail, finale, reduced-motion) just works.
+    5. runStageEffect(i) + resetStageEffect(i) — one branch per stage's effect,
+       keyed to 0-based index. run = the motion; reset = the static end-state
+       (which is ALSO the prefers-reduced-motion / no-JS fallback).
+  Everything else (replayable reveal engine, theme, rail, finale, reduced-motion)
+  just works — effects replay on every scroll-in, see the engine below.
 
   For an editorial (non-scrollytelling) post, keep <head>+topbar+atmosphere,
   drop the rail / spine / progress / autoplay, and lay out <section>s of
@@ -290,7 +293,7 @@
         <h2 class="reveal d1">TODO 第二步</h2>
         <p class="desc reveal d1">TODO 正文。</p>
         <div class="viz reveal d2">
-          <div class="viz-cap">权重条 / animate via animateProbs</div>
+          <div class="viz-cap">权重条 / 进入视口时随 .in 自动填充并重播</div>
           <div class="probs">
             <div class="prob"><span class="t">A</span><span class="bar"><i style="--w:60%"></i></span><span class="pct">0.60</span></div>
             <div class="prob"><span class="t">B</span><span class="bar"><i style="--w:40%"></i></span><span class="pct">0.40</span></div>
@@ -347,9 +350,22 @@
     railBtns.forEach((b,i)=>{ b.classList.toggle('active',i===current); b.classList.toggle('done',i<current); });
   }
 
-  // scroll-driven reveal: add .in + fire the one-time effect as a stage enters view
+  // scroll-driven reveal: replay effects EVERY time a stage enters view,
+  // reset them when it leaves — never just the first time (see resetStageEffect).
   const revealObserver=new IntersectionObserver((entries)=>{
-    entries.forEach(e=>{ if(e.isIntersecting && !e.target.classList.contains('in')){ e.target.classList.add('in'); runStageEffect(stages.indexOf(e.target)); } });
+    entries.forEach(e=>{
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){
+          e.target.classList.add('in');
+          resetStageEffect(idx);   // arm a clean start
+          runStageEffect(idx);     // then play
+        }
+      } else if(e.target.classList.contains('in')){
+        e.target.classList.remove('in');
+        resetStageEffect(idx);     // leaving view → cancel + restore static state
+      }
+    });
   },{threshold:0,rootMargin:'0px 0px -20% 0px'});
   stages.forEach(s=>revealObserver.observe(s));
 
@@ -381,7 +397,7 @@
 
   replayBtn.addEventListener('click',()=>{
     stopAuto();
-    stages.forEach(s=>s.classList.remove('in'));
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
     finale.classList.remove('show');
     current=-1; updateProgress();
     window.scrollTo({top:0,behavior:'smooth'});
@@ -398,18 +414,41 @@
     flex.appendChild(m);unit.appendChild(flex);return unit;
   }
 
-  // ── helper: replay the width fill of .prob bars inside a scope ──
-  function animateProbs(scope){
-    scope.querySelectorAll('.prob .bar i').forEach(el=>{ const w=el.style.getPropertyValue('--w'); el.style.width='0'; setTimeout(()=>{el.style.width=w;},150); });
+  // ── replayable per-stage animation engine ─────────────────────────────
+  // Effects must REPLAY on every scroll-in and never leave a half-played state.
+  // Track each stage's timers/rafs (keyed by index) so a fast scroll-away cancels
+  // them via clearStage — that's what stops stuck-invisible cells / overlap.
+  const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){ (timers[i]||[]).forEach(clearTimeout); timers[i]=[]; (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[]; }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }   // cancellable setTimeout, keyed to stage i
+  function countUp(i,el,target,{dur=900,dec=2}={}){                                // animate a number 0 → target
+    const start=performance.now();
+    const step=now=>{ const t=Math.min(1,(now-start)/dur), e=1-Math.pow(1-t,3);
+      el.textContent = dec===0 ? Math.round(target*e).toLocaleString('en-US') : (target*e).toFixed(dec);
+      if(t<1)(rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step)); };
+    (rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
   }
 
   // ── BUILD-ONCE block: construct any static visuals here (by id) ──
   // e.g. document.getElementById('myMatrix').appendChild(makeMatrix([[1,0],[0,1]],{name:'I',dim:'2×2'}));
 
-  // ── per-stage animations: keyed to 0-based stage index (position!) ──
+  // ── per-stage MOTION: fired on every scroll-in, keyed to 0-based index ──
+  // Use later(i,…) / countUp(i,…) so a scroll-away can cancel mid-flight.
   function runStageEffect(i){
-    // if(i===1){ animateProbs(stages[1]); }
-    // if(i===3){ /* highlight cells, fill heatmap, etc. */ }
+    if(reduceMotion) return;                 // resetStageEffect already shows the final state
+    // if(i===1){ later(i,()=>stages[1].querySelectorAll('.chip').forEach(c=>c.classList.add('on')),200); }
+    // if(i===3){ countUp(i,document.getElementById('n'),42,{dec:0}); }
+    // Note: .prob bars + .reveal blocks already replay via CSS when .in toggles.
+  }
+
+  // ── per-stage RESET: cancel timers + restore the final static state ──
+  // This end-state IS the no-JS / prefers-reduced-motion fallback — make it
+  // show the complete, correct content on its own. One branch per effect.
+  function resetStageEffect(i){
+    clearStage(i);
+    // if(i===1){ stages[1].querySelectorAll('.chip').forEach(c=>c.classList.add('on')); }
+    // if(i===3){ document.getElementById('n').textContent='42'; }
   }
 
   updateProgress();

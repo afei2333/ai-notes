@@ -36,9 +36,13 @@ raw hex.
 
 - One orchestrated entrance: `@keyframes rise` (fade + translateY) staggered via `.d1/.d2/.d3`.
 - Scroll-driven reveal: `.reveal` is hidden until its stage gets `.in`. Per-stage payoff animations
-  fire once from `runStageEffect(i)`.
+  **replay on every scroll-in** — the skeleton's enter/leave `IntersectionObserver` fires
+  `runStageEffect(i)` each time a stage enters and `resetStageEffect(i)` when it leaves; effects are
+  cancellable via the `timers`/`rafs` + `clearStage` engine (already in the skeleton). Never gate an
+  effect behind a one-time "has it fired?" flag.
 - Always leave a static fallback — the stylesheet disables motion under `prefers-reduced-motion`,
-  and JS-driven final states must apply even when transitions are off.
+  and `resetStageEffect`'s restored end-state IS that fallback, so it must show the complete content
+  on its own.
 
 ## Stage skeleton (fixed rhythm)
 

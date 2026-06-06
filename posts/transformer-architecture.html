@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transformer：一个词向量穿行的塔 · 原理手记</title>
+<meta name="description" content="跟着 GPT-2 的真实尺寸（768 维、12 头、12 层），看一句 the cat sat 如何被 token embedding、位置编码、多头注意力、残差流、LayerNorm、FFN 一层层算成下一个词。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .progress-wrap{display:flex;align-items:center;gap:0.9rem}
+  .progress-num{font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.1em}
+  .progress-num b{color:var(--accent);font-weight:500}
+  .progress-track{width:clamp(60px,12vw,140px);height:1px;background:var(--line-strong);position:relative}
+  .progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .9s cubic-bezier(.16,1,.3,1)}
+
+  /* ── side rail ───────────────────────────────────────────── */
+  .rail{position:fixed;left:clamp(1rem,2.5vw,2rem);top:50%;transform:translateY(-50%);z-index:40;display:flex;flex-direction:column;gap:0.85rem;opacity:0;transition:opacity .6s}
+  .rail.show{opacity:1}
+  .rail button{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.08em;transition:color .4s;padding:0}
+  .rail .dot{width:6px;height:6px;border-radius:50%;border:1px solid var(--ink-faint);transition:all .4s;flex:none}
+  .rail button .lbl{opacity:0;transform:translateX(-4px);transition:all .4s;white-space:nowrap}
+  .rail button:hover .lbl{opacity:1;transform:none}
+  .rail button.active{color:var(--accent)}
+  .rail button.active .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 4px rgba(200,100,60,0.12)}
+  .rail button.done .dot{border-color:var(--ink-dim);background:var(--ink-dim)}
+  @media(max-width:1024px){.rail{display:none}}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1040px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;font-size:clamp(2.8rem,8vw,6.2rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:48ch;margin-top:2.4rem;color:var(--ink);font-size:1.2rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub code{font-family:var(--mono);font-size:0.92em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:3.2rem;opacity:0;animation:rise 1s .65s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0}
+  .start-btn{margin-top:3.6rem;align-self:flex-start;cursor:pointer;background:none;border:1px solid var(--line-strong);color:var(--ink);font-family:var(--mono);font-size:0.78rem;letter-spacing:0.18em;text-transform:uppercase;padding:1.05rem 2.2rem;border-radius:2rem;display:flex;align-items:center;gap:0.9rem;transition:all .5s cubic-bezier(.16,1,.3,1);opacity:0;animation:rise 1s .8s forwards}
+  .start-btn:hover{border-color:var(--accent);color:var(--accent);gap:1.4rem;padding-right:2.6rem}
+  .start-btn .arc{width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center;font-size:0.8rem;transition:transform .5s}
+  .start-btn:hover .arc{transform:rotate(90deg)}
+
+  /* ── flow / stages ───────────────────────────────────────── */
+  .flow{position:relative;padding-bottom:6rem}
+  .spine{position:absolute;left:clamp(14px,3.5vw,38px);top:0;bottom:0;width:1px;background:var(--line)}
+  .spine .lit{position:absolute;inset:0 auto auto 0;width:1px;height:0;background:linear-gradient(var(--accent),var(--sage));transition:height 1s cubic-bezier(.16,1,.3,1)}
+  @media(max-width:680px){.spine{display:none}}
+  .stage{position:relative;padding:clamp(2.5rem,6vw,5rem) 0 clamp(2.5rem,6vw,5rem) clamp(48px,9vw,110px);border-bottom:1px solid var(--line);scroll-margin-top:78px}
+  @media(max-width:680px){.stage{padding-left:0}}
+  .stage[hidden]{display:none}
+  .stage.in .reveal{opacity:1;transform:none}
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.12s}.reveal.d2{transition-delay:.24s}.reveal.d3{transition-delay:.36s}.reveal.d4{transition-delay:.48s}
+  .stage .node{position:absolute;left:clamp(8px,3.5vw,32px);top:clamp(2.7rem,6vw,5.2rem);width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-faint);transition:all .6s}
+  .stage.in .node{border-color:var(--accent);box-shadow:0 0 0 5px rgba(200,100,60,0.1)}
+  .stage.in .node::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+  @media(max-width:680px){.stage .node{display:none}}
+  .stage-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .stage-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .stage-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .stage-phase{margin-left:auto;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint);border:1px solid var(--line);padding:0.3rem 0.7rem;border-radius:1rem}
+  .stage-phase.key{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .stage h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.8rem,4.4vw,3rem);line-height:1.1;letter-spacing:-0.01em}
+  .stage .desc{max-width:54ch;margin-top:1.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.95}
+  .stage .desc b{color:var(--accent-soft);font-weight:500}
+  .stage .desc a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--line-strong);transition:border-color .3s}
+  .stage .desc a:hover{border-color:var(--accent)}
+  .stage .desc code,.note code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft)}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.4rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.2rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+  .note a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--line-strong)}
+
+  /* ── reusable component library ───────────────────────────── */
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .chip{font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);transition:all .4s}
+  .stage.in .chip{animation:pop .6s backwards}
+  .probs{display:flex;flex-direction:column;gap:0.55rem;margin-top:0.4rem}
+  .prob{display:flex;align-items:center;gap:0.9rem}
+  .prob .t{font-family:var(--mono);font-size:0.78rem;width:96px;flex:none;color:var(--ink)}
+  .prob .bar{flex:1;height:8px;background:var(--line-strong);border-radius:4px;position:relative;overflow:hidden}
+  .prob .bar i{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-soft));border-radius:4px;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+  .stage.in .prob .bar i{width:var(--w)}
+  .prob .pct{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);width:44px;text-align:right;flex:none}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0.8rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.5rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.06em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .learns{display:flex;flex-direction:column;gap:0.6rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.95rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.6rem;padding:0.7rem 1rem;background:var(--chip-bg);line-height:1.7}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.5rem;font-family:var(--mono);font-size:0.72rem}
+  .learn b{color:var(--accent-soft);font-weight:500}
+  /* heatmap grid */
+  .attn{display:grid;gap:4px;width:fit-content}
+  .attn .c{width:40px;height:32px;border-radius:4px;background:var(--line-strong);display:grid;place-items:center;font-family:var(--mono);font-size:0.62rem;color:transparent;transition:background .6s,color .6s}
+  .attn .c.lit{color:var(--ink)}
+
+  /* ── math (KaTeX) ────────────────────────────────────────── */
+  .katex{font-size:1.02em}
+  .desc .katex,.note .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  .formula-display{display:flex;justify-content:center;padding:0.4rem 0 0.2rem;font-size:clamp(0.92rem,2.4vw,1.3rem);color:var(--ink);overflow-x:auto}
+  .formula-display .katex-display{margin:0}
+  .formula-display .katex-display>.katex{white-space:normal}
+
+  /* ── bespoke visuals (built from tokens) ─────────────────── */
+  /* token pills + embedding vectors */
+  .embrow{display:flex;flex-wrap:wrap;gap:1.4rem;justify-content:center}
+  .embunit{display:flex;flex-direction:column;align-items:center;gap:0.7rem}
+  .tokpill{font-family:var(--mono);font-size:0.92rem;color:var(--accent-soft);border:1px solid var(--accent);border-radius:0.5rem;padding:0.4rem 0.95rem;background:rgba(200,100,60,0.08)}
+  .tokpill .id{display:block;font-size:0.56rem;color:var(--ink-faint);text-align:center;margin-top:0.2rem}
+  .vec{display:flex;gap:3px;align-items:center}
+  .vec .vc{width:30px;height:26px;display:grid;place-items:center;font-family:var(--mono);font-size:0.64rem;color:var(--ink);background:var(--chip-bg);border:1px solid var(--line);border-radius:4px;opacity:0;transform:translateY(6px);transition:opacity .4s,transform .4s}
+  .vec .vc.show{opacity:1;transform:none}
+  .vec .more{font-family:var(--mono);font-size:0.7rem;color:var(--ink-faint);margin-left:2px}
+
+  /* tower / stack of blocks */
+  .stack{display:flex;flex-direction:column;gap:0.45rem;max-width:360px;margin:0 auto}
+  .blk{border:1px solid var(--line-strong);border-radius:8px;padding:0.6rem 0.95rem;font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);background:var(--chip-bg);display:flex;justify-content:space-between;align-items:center;opacity:0.35;transition:all .5s}
+  .blk.lit{opacity:1;border-color:var(--accent);color:var(--ink);box-shadow:0 0 0 3px rgba(200,100,60,0.07)}
+  .blk.edge{border-style:dashed;color:var(--sage)}
+  .blk.edge.lit{border-color:var(--sage);box-shadow:0 0 0 3px rgba(127,145,131,0.08)}
+  .blk .bn{color:var(--accent);font-size:0.62rem}
+  .stackcap{text-align:center;font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);letter-spacing:0.1em;margin:0.5rem 0;text-transform:uppercase}
+
+  /* sine positional waves */
+  .pe-wave{fill:none;stroke-width:1.6;stroke-dasharray:var(--len);stroke-dashoffset:var(--len)}
+  .viz.in-go .pe-wave{animation:draw 1.6s cubic-bezier(.16,1,.3,1) forwards}
+  .viz.in-go .pe-wave.w2{animation-delay:.18s}
+  .viz.in-go .pe-wave.w3{animation-delay:.36s}
+  .viz.in-go .pe-wave.w4{animation-delay:.54s}
+
+  /* residual road */
+  .road svg{display:block;margin:0 auto;max-width:100%}
+  .road .flowdot{opacity:0}
+  .road.in-go .flowdot{animation:roadflow 2.4s linear infinite}
+  .road .rbox{fill:var(--chip-bg);stroke:var(--line-strong)}
+  .road .rbox.attn{stroke:var(--accent)}
+  .road .rbox.ffn{stroke:var(--sage)}
+
+  /* layernorm diverging bars */
+  .lnchart{position:relative;display:flex;flex-direction:column;gap:0.5rem;max-width:420px;margin:0 auto;padding:0.4rem 0}
+  .lnchart::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line-strong)}
+  .lnr{position:relative;height:13px}
+  .lnbar{position:absolute;top:1px;bottom:1px;border-radius:3px;width:0;transition:all 1s cubic-bezier(.16,1,.3,1)}
+  .lnbar.pos{left:50%;background:linear-gradient(90deg,var(--accent),var(--accent-soft))}
+  .lnbar.neg{right:50%;background:linear-gradient(270deg,var(--sage),rgba(127,145,131,0.5))}
+  .lnlabels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.58rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.08em;margin-top:0.8rem}
+
+  /* multi-head grid */
+  .heads{display:flex;flex-wrap:wrap;gap:1.1rem;justify-content:center}
+  .minihead{display:flex;flex-direction:column;gap:0.5rem;align-items:center}
+  .minihead .ht{font-family:var(--mono);font-size:0.56rem;color:var(--sage);text-transform:uppercase;letter-spacing:0.08em}
+  .hgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+  .hc{width:22px;height:18px;border-radius:3px;background:var(--line-strong);transition:background .6s}
+
+  /* gradient flow comparison */
+  .gflow{display:flex;gap:clamp(1.5rem,6vw,3.5rem);justify-content:center;align-items:flex-end}
+  .gcol{display:flex;flex-direction:column-reverse;gap:0.32rem;align-items:center}
+  .gcol .gt{font-family:var(--mono);font-size:0.58rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.06em;margin-top:0.6rem}
+  .gseg{width:56px;height:13px;border-radius:3px;background:var(--accent);opacity:0.12;transition:opacity .8s}
+
+  /* FFN expand/contract */
+  .ffn{display:flex;align-items:center;justify-content:center;gap:clamp(0.6rem,3vw,1.6rem);min-height:210px}
+  .ffcol{display:flex;flex-direction:column;align-items:center;gap:0.6rem}
+  .ffbar{width:46px;height:0;background:linear-gradient(var(--accent),var(--accent-soft));border-radius:6px;transition:height 1s cubic-bezier(.16,1,.3,1)}
+  .ffcol.mid .ffbar{background:linear-gradient(var(--sage),rgba(127,145,131,0.5))}
+  .fflab{font-family:var(--mono);font-size:0.62rem;color:var(--ink-dim);text-align:center}
+  .fflab b{display:block;color:var(--accent-soft);font-size:0.78rem}
+  .ffarrow{font-family:var(--serif);font-style:italic;color:var(--ink-faint);font-size:1rem;align-self:center}
+
+  /* mask grids */
+  .masks{display:flex;flex-wrap:wrap;gap:1.6rem;justify-content:center}
+  .maskunit{display:flex;flex-direction:column;gap:0.6rem;align-items:center;max-width:200px}
+  .maskunit .mt{font-family:var(--mono);font-size:0.6rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em}
+  .maskunit .md{font-family:var(--mono);font-size:0.62rem;color:var(--ink-dim);text-align:center;line-height:1.5}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5;opacity:0;transition:opacity 1s}
+  .finale.show{opacity:1}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:32ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+  .replay{margin:2.4rem auto 0;display:block;cursor:pointer;background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.16em;text-transform:uppercase;transition:color .4s;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .replay:hover{color:var(--accent)}
+
+  /* ── controls ────────────────────────────────────────────── */
+  .auto-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:1rem;transition:all .4s}
+  .auto-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auto-btn.on{border-color:var(--sage);color:var(--sage)}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes draw{from{stroke-dashoffset:var(--len)}to{stroke-dashoffset:0}}
+  @keyframes roadflow{0%{opacity:0;transform:translateY(0)}10%{opacity:1}90%{opacity:1}100%{opacity:0;transform:translateY(-220px)}}
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+    .reveal{opacity:1;transform:none}
+    .vec .vc{opacity:1;transform:none}
+    .pe-wave{stroke-dashoffset:0}
+  }
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">原理手记 · <b>Transformer 架构</b></div>
+    </div>
+    <div class="progress-wrap">
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="auto-btn" id="autoBtn">自动播放</button>
+      <div class="progress-num"><b id="pNum">00</b> / 12</div>
+      <div class="progress-track"><div class="progress-fill" id="pFill"></div></div>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail"></nav>
+
+  <main class="shell">
+    <section class="hero">
+      <div class="kicker">A Field Guide · Transformer 架构</div>
+      <h1>
+        <span class="l">一个词向量，</span>
+        <span class="l"><em>穿行</em>整座塔。</span>
+      </h1>
+      <p class="sub">跟着 <code>GPT-2</code> 的真实尺寸——<code>768</code> 维、<code>12</code> 头、<code>12</code> 层——看一句 <code>the cat sat</code> 如何被 token embedding、位置编码、多头注意力、残差流、LayerNorm、FFN 一层层算成<b>下一个词</b>。</p>
+      <div class="meta">
+        <div><b>768</b>残差流维度 d_model</div>
+        <div><b>12 × 12</b>注意力头 × 堆叠层</div>
+        <div><b>O(n²)</b>注意力的代价</div>
+      </div>
+      <button class="start-btn" id="startBtn">进塔 <span class="arc">↓</span></button>
+    </section>
+
+    <section class="flow" id="flow">
+      <div class="spine"><div class="lit" id="lit"></div></div>
+
+      <!-- 0 — 总览 -->
+      <article class="stage" data-phase="鸟瞰">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">01</span><span class="stage-en">Attention Is All You Need</span><span class="stage-phase">鸟瞰 · Overview</span></div>
+        <h2 class="reveal d1">一座由相同积木堆起的塔</h2>
+        <p class="desc reveal d1">2017 年那篇《Attention Is All You Need》最颠覆的一点，是彻底抛弃了 RNN <b>一个词等一个词</b>的串行计算——整句话被同时喂进去，所有位置<b>并行</b>处理。这让模型能吃下海量数据，训练得又深又快。</p>
+        <p class="desc reveal d1">别被论文里的方块图吓到。一个 decoder-only 的 Transformer（GPT 这一系）本质上只做三件事：把词查成向量（<code>Embedding</code>）、让向量在一摞<b>结构完全相同</b>的 Block 里反复被改写、最后把向量翻译回一个词的概率分布。这一摞 Block——<code>GPT-2</code> 有 12 层、<code>GPT-3</code> 有 96 层——每一层都长得一模一样。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">全塔鸟瞰 / Anatomy</div>
+          <div class="stack" id="towerStack"></div>
+          <div class="note">整篇文章，我们就跟着一句 <code>the cat sat</code> 的向量，从塔底走到塔顶。</div>
+        </div>
+      </article>
+
+      <!-- 1 — 词嵌入 -->
+      <article class="stage" data-phase="入口">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">Token Embedding</span><span class="stage-phase">入口 · Lookup</span></div>
+        <h2 class="reveal d1">先把词查成一串数字</h2>
+        <p class="desc reveal d1">计算机不认识 "cat"，只认识数字。第一步，分词器（tokenizer）把句子切成 token，每个 token 是词表里的一个整数 id——<code>the cat sat</code> 在 GPT-2 的 BPE 词表里大致对应 <code>1169 / 3797 / 3332</code> 三个 id。</p>
+        <p class="desc reveal d1">紧接着是一张巨大的查找表：<b>嵌入矩阵</b>（embedding matrix），形状 <code>50257 × 768</code>——词表里每个 token 都对应一行 768 个数。所谓"嵌入"，就是拿 id 去这张表里<b>取出那一行</b>。"cat" 不再是 3797，而是一个 768 维向量，它在向量空间里的位置编码了"猫"的含义。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">token → 768 维向量 / Lookup</div>
+          <div class="embrow" id="embRow"></div>
+          <div class="note">这 768 个数一开始是随机的，是训练把语义"挤"进了这个空间——意思相近的词，向量也相近（<code>king − man + woman ≈ queen</code> 的那种相近）。</div>
+        </div>
+      </article>
+
+      <!-- 2 — 位置编码 -->
+      <article class="stage" data-phase="顺序">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">Positional Encoding</span><span class="stage-phase key">顺序 · Order</span></div>
+        <h2 class="reveal d1">但顺序去哪了？</h2>
+        <p class="desc reveal d1">这里藏着 Transformer 的一个先天缺陷：注意力本身<b>分不清词序</b>。把 "the cat sat" 打乱成 "sat the cat"，若只看词向量的集合，注意力算出来的结果<b>一模一样</b>——它是"置换不变"（permutation-invariant）的。可语言里，顺序就是意义。</p>
+        <p class="desc reveal d1">解法是给每个位置加一个<b>位置编码</b>（positional encoding）向量，直接加到词向量上。原版论文用一组不同频率的正弦/余弦波，低维慢、高维快，让每个位置都有独一无二的"指纹"：</p>
+        <div class="formula-display reveal d2">\[ PE_{(pos,\,2i)}=\sin\!\Big(\tfrac{pos}{10000^{2i/d}}\Big),\qquad PE_{(pos,\,2i+1)}=\cos\!\Big(\tfrac{pos}{10000^{2i/d}}\Big) \]</div>
+        <div class="viz reveal d2" id="peViz">
+          <div class="viz-cap">不同频率的正弦波 / Sinusoids</div>
+          <svg id="peSvg" viewBox="0 0 520 150" width="100%" height="150" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="note">最终送进塔的，是 <b>词向量 + 位置向量</b>。GPT 改用<b>可学习</b>的位置向量；如今主流是 <code>RoPE</code>（旋转位置编码），把位置<b>旋转</b>进 Q、K 里，对相对距离更友好、外推更稳。</div>
+        </div>
+      </article>
+
+      <!-- 3 — 残差流 -->
+      <article class="stage" data-phase="核心">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Residual Stream</span><span class="stage-phase key">核心心智模型</span></div>
+        <h2 class="reveal d1">一条主干道，子层只读写它</h2>
+        <p class="desc reveal d1">这是看懂 Transformer 最关键的一张图。把那个 768 维向量想成一条贯穿到塔顶的<b>主干道</b>（residual stream）。每个子层都不直接替换它，而是从主干道上<b>读</b>当前的 x，算出一个"增量"，再<b>加</b>回主干道：</p>
+        <div class="formula-display reveal d2">\[ x \;\leftarrow\; x + \operatorname{Sublayer}(x) \]</div>
+        <p class="desc reveal d2">向量一路上只被<b>逐步修订</b>，从不推倒重来。一个 Transformer Block 里有两个这样的子层串在主干道上：先是<b>多头注意力</b>（让不同位置交换信息），再是<b>前馈网络</b>（逐位置加工）。每个子层都包着"读 → 算 → 加回"这同一个壳。</p>
+        <div class="viz reveal d3 road" id="roadViz">
+          <div class="viz-cap">残差流主干道 / The Highway</div>
+          <svg id="roadSvg" viewBox="0 0 360 260" width="100%" height="260" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </article>
+
+      <!-- 4 — LayerNorm -->
+      <article class="stage" data-phase="稳定">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">Layer Normalization</span><span class="stage-phase">稳定 · Stabilize</span></div>
+        <h2 class="reveal d1">每次动手前，先把数字捋平</h2>
+        <p class="desc reveal d1">向量在主干道上被反复相加，数值容易越滚越大或忽高忽低，训练就会发散。所以每个子层在读取主干道之前，先做一次<b>层归一化</b>（Layer Normalization）：把这个向量的 768 个数<b>减均值、除标准差</b>，拉成均值 0、方差 1，再用两个可学习参数 γ、β 缩放平移：</p>
+        <div class="formula-display reveal d2">\[ \operatorname{LN}(x)=\gamma\cdot\dfrac{x-\mu}{\sqrt{\sigma^2+\epsilon}}+\beta \]</div>
+        <div class="viz reveal d2">
+          <div class="viz-cap">归一化前 vs 后 / Centering</div>
+          <div class="lnchart" id="lnChart"></div>
+          <div class="lnlabels"><span id="lnState">归一化前：参差、偏移</span><span>μ = 0</span></div>
+          <div class="note">注意它沿<b>每个 token 自己的 768 维</b>归一化（不是跨 batch），所以和句长、批大小都无关。现代模型几乎都用 <b>Pre-LN</b>（把归一化放在子层<b>之前</b>），比原版的 Post-LN 训练更稳。</div>
+        </div>
+      </article>
+
+      <!-- 5 — 多头注意力 -->
+      <article class="stage" data-phase="核心">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">Multi-Head Attention</span><span class="stage-phase key">核心 · Mixing</span></div>
+        <h2 class="reveal d1">同一句话，十二种看法</h2>
+        <p class="desc reveal d1">注意力的内部——Q、K、V、缩放点积、softmax——在 <a href="attention-mechanism.html">《注意力机制，逐矩阵拆解》</a> 已逐格算过；这里只看它在塔里的角色和"多头"的妙处。一个头把每个词投影成 Query、Key、Value，让每个位置去"看"句中其他位置、按相关度加权汇总信息。</p>
+        <div class="formula-display reveal d2">\[ \operatorname{Attention}(\htmlClass{m-q}{Q},\htmlClass{m-k}{K},\htmlClass{m-v}{V})=\operatorname{softmax}\!\Big(\tfrac{\htmlClass{m-q}{Q}\htmlClass{m-k}{K^{\top}}}{\sqrt{d_k}}\Big)\htmlClass{m-v}{V} \]</div>
+        <p class="desc reveal d2">但只用一个头太单薄。Transformer 把 768 维切成 <b>12 个头</b>、每头 <code>64</code> 维，<b>并行</b>跑 12 套独立注意力。不同头会自发学到不同关系：有的盯<b>相邻词</b>，有的连<b>主谓</b>，有的找<b>指代</b>。12 个头各算各的，再拼接（concat）回 768 维，过输出投影 <code>W_O</code> 融合，写回主干道。</p>
+        <div class="viz reveal d3">
+          <div class="viz-cap">同一句话上的若干注意力头 / Heads (示意)</div>
+          <div class="heads" id="headsBox"></div>
+          <div class="note">行 = "谁在看"，列 = "看向谁"，颜色越亮注意力权重越大。12 个头里这是有代表性的 4 个：相邻、主谓、指代、全局。</div>
+        </div>
+      </article>
+
+      <!-- 6 — 残差连接 -->
+      <article class="stage" data-phase="深度">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Residual Connection</span><span class="stage-phase">深度 · Why it trains</span></div>
+        <h2 class="reveal d1">那个加号，才是深度的功臣</h2>
+        <p class="desc reveal d1">回到 <code>x = x + Sublayer(x)</code> 里的那个<b>加号</b>。它叫<b>残差连接</b>（residual / skip connection），看着不起眼，却是能把网络堆到几十上百层还训得动的关键。</p>
+        <p class="desc reveal d1">原因在反向传播（见 <a href="backpropagation.html">《反向传播：梯度如何流动》</a>）：梯度沿主干道倒流时，加号给了它一条<b>恒等高速路</b>——即便子层那一支把梯度衰减得几近归零，主干道这一支仍让梯度<b>原样穿过</b>，不会逐层相乘到消失。没有残差，12 层就已难训；有了它，96 层也畅通。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">梯度逆流：无残差 vs 有残差 / Gradient flow</div>
+          <div class="gflow" id="gFlow">
+            <div class="gcol" id="gNo">
+              <div class="gt">无残差 · 逐层衰减</div>
+            </div>
+            <div class="gcol" id="gYes">
+              <div class="gt">有残差 · 畅通</div>
+            </div>
+          </div>
+          <div class="note">每一格是梯度流过一层后剩下的强度，从塔顶往塔底读。左边乘着乘着就没了（梯度消失）；右边靠加号一路保住。</div>
+        </div>
+      </article>
+
+      <!-- 7 — FFN -->
+      <article class="stage" data-phase="加工">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">Feed-Forward Network</span><span class="stage-phase">加工 · Knowledge</span></div>
+        <h2 class="reveal d1">升维、激活、再降维</h2>
+        <p class="desc reveal d1">注意力让词与词<b>交换</b>信息；信息到手后，<b>前馈网络</b>（FFN，也叫 MLP）对每个 token 单独加工。它只有两层全连接，中间夹一个非线性激活：</p>
+        <div class="formula-display reveal d2">\[ \operatorname{FFN}(x)=W_2\,\operatorname{GELU}(W_1 x + b_1)+b_2 \]</div>
+        <p class="desc reveal d2">关键在中间维度：先把 768 维<b>升到 4 倍</b>、即 <code>3072</code> 维，过 GELU 激活，再<b>压回</b> 768 维。这个"先撑大、再收紧"赋予了模型非线性表达力。它也是参数大头——一个 Block 里 FFN 的参数约是注意力的<b>两倍</b>，许多事实性"知识"就存在这些权重里。</p>
+        <div class="viz reveal d3">
+          <div class="viz-cap">768 → 3072 → 768 / Expand &amp; contract</div>
+          <div class="ffn" id="ffnBox">
+            <div class="ffcol"><div class="ffbar" data-h="60"></div><div class="fflab"><b>768</b>输入</div></div>
+            <div class="ffarrow">→ W₁ →</div>
+            <div class="ffcol mid"><div class="ffbar" data-h="190"></div><div class="fflab"><b>3072</b>GELU</div></div>
+            <div class="ffarrow">→ W₂ →</div>
+            <div class="ffcol"><div class="ffbar" data-h="60"></div><div class="fflab"><b>768</b>输出</div></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 8 — 堆叠 -->
+      <article class="stage" data-phase="深度">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Stacking N Layers</span><span class="stage-phase">深度 · Depth</span></div>
+        <h2 class="reveal d1">把同一块积木，叠十二遍</h2>
+        <p class="desc reveal d1">一个 Block（注意力 + FFN，各带残差与 LN）就是一块积木。Transformer 把<b>结构完全相同、但权重各不相同</b>的 Block 摞起来：GPT-2 摞 12 层，GPT-3 摞 96 层。主干道上的向量穿过每一层，被<b>多修订一次</b>。</p>
+        <p class="desc reveal d1">经验上，浅层更关注<b>表层与语法</b>（词形、相邻搭配），越往上越偏<b>语义与抽象</b>（指代、句意、事实）。同一个向量从塔底到塔顶，含义被一层层"提纯"——这就是"深度"带来的层级表征。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">12 层逐层精炼 / The Stack</div>
+          <div class="stack" id="layerStack"></div>
+          <div class="facts" style="margin-top:1.4rem">
+            <div class="fact"><b>12</b><span>GPT-2 层数</span></div>
+            <div class="fact"><b>96</b><span>GPT-3 层数</span></div>
+            <div class="fact"><b>124M</b><span>GPT-2 参数</span></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- 9 — 三种装配 -->
+      <article class="stage" data-phase="家族">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">10</span><span class="stage-en">Encoder · Decoder</span><span class="stage-phase key">家族 · Variants</span></div>
+        <h2 class="reveal d1">同样的积木，三种搭法</h2>
+        <p class="desc reveal d1">同一块 Transformer 积木，靠"谁能看见谁"（注意力<b>掩码</b>）的不同，搭出了三个家族：</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">三种注意力可见性 / Masks</div>
+          <div class="masks" id="masksBox"></div>
+          <div class="note">绿格 = 允许注意；空格 = 被遮住。差别只在掩码<b>形状</b>，以及解码器是否额外带一层<b>交叉注意力</b>。</div>
+        </div>
+        <div class="learns reveal d3" style="margin-top:1.6rem">
+          <div class="learn"><i>ENCODER-ONLY</i><b>BERT 一类</b>：双向注意力，每个词能看见<b>左右全部</b>。擅长"理解"——分类、抽取、检索。</div>
+          <div class="learn"><i>DECODER-ONLY</i><b>GPT 一类</b>：因果掩码（causal mask），每个词只能看见<b>自己及左边</b>，看不到未来。擅长"生成"——逐字续写。</div>
+          <div class="learn"><i>ENCODER-DECODER</i><b>原版 / T5</b>：编码器双向读完输入，解码器一边因果生成、一边用<b>交叉注意力</b>回看编码器输出。擅长"转换"——翻译、摘要。</div>
+        </div>
+      </article>
+
+      <!-- 10 — 输出头 -->
+      <article class="stage" data-phase="出口">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">11</span><span class="stage-en">Output Head</span><span class="stage-phase">出口 · Unembed</span></div>
+        <h2 class="reveal d1">把向量翻译回一个词</h2>
+        <p class="desc reveal d1">向量爬到塔顶，经最后一次 LayerNorm 后，要变回人话。它乘上<b>反嵌入矩阵</b>（unembedding，形状 <code>768 × 50257</code>），得到词表上每个 token 的<b>原始分数</b> logits；再过一次 softmax，变成一个<b>概率分布</b>。</p>
+        <p class="desc reveal d1">一个常见的省参技巧是<b>权重共享</b>（weight tying）：反嵌入矩阵直接复用入口那张嵌入表的转置——进、出共用同一张表。对 <code>the cat sat</code>，塔顶给出的下一个词分布大概是这样：</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">下一个 token 的概率 / Next-token (示意)</div>
+          <div class="probs" id="outProbs">
+            <div class="prob"><span class="t">▁on</span><span class="bar"><i style="--w:78%"></i></span><span class="pct">0.34</span></div>
+            <div class="prob"><span class="t">▁down</span><span class="bar"><i style="--w:42%"></i></span><span class="pct">0.18</span></div>
+            <div class="prob"><span class="t">▁there</span><span class="bar"><i style="--w:28%"></i></span><span class="pct">0.12</span></div>
+            <div class="prob"><span class="t">▁up</span><span class="bar"><i style="--w:21%"></i></span><span class="pct">0.09</span></div>
+            <div class="prob"><span class="t">▁quietly</span><span class="bar"><i style="--w:14%"></i></span><span class="pct">0.06</span></div>
+          </div>
+          <div class="note">挑一个词（贪心取最大、或按 temperature 采样），接到句尾，整座塔再从头跑一遍——这就是<b>逐字生成</b>（而把已算过的 K、V 存下来不重算，正是 <a href="kv-cache.html">KV 缓存</a> 那篇的事）。</div>
+        </div>
+      </article>
+
+      <!-- 11 — 全局账本 -->
+      <article class="stage" data-phase="收支">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">12</span><span class="stage-en">The Ledger</span><span class="stage-phase">收支 · Accounting</span></div>
+        <h2 class="reveal d1">这座塔，到底花在哪</h2>
+        <p class="desc reveal d1">把账算清。一个 124M 参数的 GPT-2，参数主要分布在三处：进出共用的嵌入表、每层注意力的四个投影（Q/K/V/O）、以及每层的 FFN——其中 <b>FFN 约占每个 Block 参数的三分之二</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">关键尺寸 / The numbers</div>
+          <div class="facts" id="ledgerFacts">
+            <div class="fact"><b data-num="768" data-dec="0">768</b><span>d_model 残差流</span></div>
+            <div class="fact"><b data-num="3072" data-dec="0">3072</b><span>FFN 中间维 (4×)</span></div>
+            <div class="fact"><b data-num="50257" data-dec="0">50257</b><span>词表大小</span></div>
+            <div class="fact"><b data-num="1024" data-dec="0">1024</b><span>上下文长度</span></div>
+            <div class="fact"><b data-num="124" data-dec="0" data-suffix="M">124M</b><span>GPT-2 参数</span></div>
+            <div class="fact"><b data-num="175" data-dec="0" data-suffix="B">175B</b><span>GPT-3 参数</span></div>
+          </div>
+        </div>
+        <p class="desc reveal d2">它最大的代价是注意力的 <b>O(n²)</b>：序列长一倍，注意力计算量就是四倍——这正是长上下文为什么贵，也是后来有了 KV 缓存、FlashAttention、稀疏注意力等一系列优化的原因。但也正因为整座塔只是"相同积木 + 残差流 + 并行注意力"这么朴素，它才能被一路扩展到千亿参数，成为今天所有大模型的地基。</p>
+      </article>
+
+    </section>
+
+    <section class="finale" id="finale">
+      <div class="mark">End of Walkthrough</div>
+      <h3>一句话进去，一个词出来——中间是十二层相同的积木，和一条从不断流的主干道。</h3>
+      <a class="nextpost" href="attention-mechanism.html">钻进注意力内部 · 逐矩阵拆解 →</a>
+      <a class="nextpost" href="../index.html" style="margin-left:.8rem">← 回到原理手记</a>
+      <button class="replay" id="replayBtn">↺ 再看一遍</button>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  const stages=Array.from(document.querySelectorAll('.stage'));
+  const rail=document.getElementById('rail');
+  const pNum=document.getElementById('pNum'), pFill=document.getElementById('pFill'), lit=document.getElementById('lit');
+  const startBtn=document.getElementById('startBtn'), autoBtn=document.getElementById('autoBtn');
+  const finale=document.getElementById('finale'), replayBtn=document.getElementById('replayBtn');
+  let current=-1, auto=false, autoTimer=null;
+  const railLabels=['总览','词嵌入','位置编码','残差流','LayerNorm','多头注意力','残差连接','前馈网络','堆叠 N 层','三种装配','输出头','全局账本'];
+
+  railLabels.forEach((lbl,i)=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="dot"></span><span class="lbl">${String(i+1).padStart(2,'0')} ${lbl}</span>`;
+    b.addEventListener('click',()=>{ stages[i].scrollIntoView({behavior:'smooth',block:'start'}); });
+    rail.appendChild(b);
+  });
+  const railBtns=Array.from(rail.children);
+
+  function updateProgress(){
+    const n=current+1;
+    pNum.textContent=String(n).padStart(2,'0');
+    pFill.style.width=(n/stages.length*100)+'%';
+    lit.style.height=(n/stages.length*100)+'%';
+    railBtns.forEach((b,i)=>{ b.classList.toggle('active',i===current); b.classList.toggle('done',i<current); });
+  }
+
+  // scroll-driven reveal: replay effects EVERY time a stage enters view
+  const revealObserver=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){
+          e.target.classList.add('in');
+          resetStageEffect(idx);
+          runStageEffect(idx);
+        }
+      } else if(e.target.classList.contains('in')){
+        e.target.classList.remove('in');
+        resetStageEffect(idx);
+      }
+    });
+  },{threshold:0,rootMargin:'0px 0px -20% 0px'});
+  stages.forEach(s=>revealObserver.observe(s));
+
+  new IntersectionObserver((entries)=>{ entries.forEach(e=>{ if(e.isIntersecting) finale.classList.add('show'); }); },{threshold:0.3}).observe(finale);
+
+  let ticking=false;
+  window.addEventListener('scroll',()=>{
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const line=window.innerHeight*0.45; let idx=-1;
+      stages.forEach((s,i)=>{ if(s.getBoundingClientRect().top<=line) idx=i; });
+      if(idx!==current){ current=idx; updateProgress(); }
+      if(current>=0) rail.classList.add('show');
+      ticking=false;
+    });
+  },{passive:true});
+
+  startBtn.addEventListener('click',()=>{ rail.classList.add('show'); stages[0].scrollIntoView({behavior:'smooth',block:'start'}); });
+
+  function autoTick(){
+    if(!auto) return;
+    const next=current+1;
+    if(next>=stages.length){ finale.scrollIntoView({behavior:'smooth',block:'center'}); stopAuto(); return; }
+    stages[next].scrollIntoView({behavior:'smooth',block:'start'});
+    autoTimer=setTimeout(autoTick,4600);
+  }
+  function stopAuto(){ auto=false; autoBtn.classList.remove('on'); autoBtn.textContent='自动播放'; if(autoTimer)clearTimeout(autoTimer); }
+  autoBtn.addEventListener('click',()=>{ if(auto){ stopAuto(); return; } auto=true; autoBtn.classList.add('on'); autoBtn.textContent='■ 停止'; rail.classList.add('show'); autoTick(); });
+
+  replayBtn.addEventListener('click',()=>{
+    stopAuto();
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
+    finale.classList.remove('show');
+    current=-1; updateProgress();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  // ── replayable timer/raf bookkeeping ──
+  const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){
+    (timers[i]||[]).forEach(clearTimeout); timers[i]=[];
+    (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[];
+  }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+  function countUp(i,el,target,{dur=900,dec=2,suffix=''}={}){
+    const start=performance.now();
+    const step=now=>{
+      const t=Math.min(1,(now-start)/dur), e=1-Math.pow(1-t,3);
+      el.textContent=Math.round(target*e).toLocaleString('en-US')+suffix;
+      if(t<1)(rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+    };
+    (rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+  }
+  function animateProbs(scope){
+    scope.querySelectorAll('.prob .bar i').forEach(el=>{ const w=el.style.getPropertyValue('--w'); el.style.width='0'; setTimeout(()=>{el.style.width=w;},150); });
+  }
+
+  // ── BUILD-ONCE static visuals ──────────────────────────────
+  const toks=['the','cat','sat'], tokIds=['1169','3797','3332'];
+
+  // stage 0: anatomy stack (top → bottom)
+  (function(){
+    const box=document.getElementById('towerStack'); if(!box) return;
+    const rows=[
+      {t:'Unembedding → softmax',sub:'logits',edge:true},
+      {t:'Transformer Block ×12',sub:'Attn + FFN'},
+      {t:'Transformer Block …',sub:'⋮'},
+      {t:'Transformer Block 1',sub:'Attn + FFN'},
+      {t:'Embedding + Positional',sub:'lookup',edge:true},
+    ];
+    rows.forEach(r=>{
+      const d=document.createElement('div');
+      d.className='blk'+(r.edge?' edge':'');
+      d.innerHTML=`<span>${r.t}</span><span class="bn">${r.sub}</span>`;
+      box.appendChild(d);
+    });
+  })();
+
+  // stage 1: token pills + embedding vectors
+  (function(){
+    const box=document.getElementById('embRow'); if(!box) return;
+    const vals=[
+      ['+0.4','-0.1','+0.9','-0.3','+0.2'],
+      ['-0.2','+0.7','+0.1','+0.5','-0.6'],
+      ['+0.8','+0.0','-0.4','+0.3','+0.6'],
+    ];
+    toks.forEach((tk,r)=>{
+      const u=document.createElement('div'); u.className='embunit';
+      u.innerHTML=`<div class="tokpill">${tk}<span class="id">id ${tokIds[r]}</span></div>`;
+      const vec=document.createElement('div'); vec.className='vec';
+      vals[r].forEach(v=>{ const c=document.createElement('div'); c.className='vc'; c.textContent=v; vec.appendChild(c); });
+      const more=document.createElement('span'); more.className='more'; more.textContent='… 768';
+      vec.appendChild(more);
+      u.appendChild(vec); box.appendChild(u);
+    });
+  })();
+
+  // stage 2: sinusoidal waves
+  (function(){
+    const svg=document.getElementById('peSvg'); if(!svg) return;
+    const W=520,H=150,mid=H/2;
+    const freqs=[ {f:0.9,a:46,cls:''},{f:1.9,a:36,cls:'w2'},{f:3.4,a:26,cls:'w3'},{f:6.2,a:18,cls:'w4'} ];
+    const cols=['var(--accent)','var(--accent-soft)','var(--sage)','var(--ink-dim)'];
+    let html=`<line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--line)" stroke-width="1"/>`;
+    freqs.forEach((fr,k)=>{
+      let d='M 0 '+mid;
+      for(let x=0;x<=W;x+=4){ const y=mid - fr.a*Math.sin(x/W*Math.PI*2*fr.f); d+=` L ${x} ${y.toFixed(1)}`; }
+      html+=`<path class="pe-wave ${fr.cls}" d="${d}" stroke="${cols[k]}" style="--len:1400"/>`;
+    });
+    svg.innerHTML=html;
+  })();
+
+  // stage 3: residual road svg
+  (function(){
+    const svg=document.getElementById('roadSvg'); if(!svg) return;
+    svg.innerHTML=`
+      <defs></defs>
+      <line x1="70" y1="20" x2="70" y2="240" stroke="var(--line-strong)" stroke-width="2"/>
+      <text x="70" y="14" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--ink-faint)">x (768维)</text>
+      <!-- attention sublayer -->
+      <path d="M70 70 H150" stroke="var(--accent)" stroke-width="1.4" fill="none"/>
+      <path d="M150 70 V110 H92" stroke="var(--accent)" stroke-width="1.4" fill="none" marker-end="url(#ar)"/>
+      <rect class="rbox attn" x="150" y="48" width="150" height="44" rx="7"/>
+      <text x="225" y="74" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--accent-soft)">Multi-Head Attn</text>
+      <circle cx="70" cy="110" r="9" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="70" y="114" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="var(--accent)">+</text>
+      <!-- ffn sublayer -->
+      <path d="M70 170 H150" stroke="var(--sage)" stroke-width="1.4" fill="none"/>
+      <path d="M150 170 V210 H92" stroke="var(--sage)" stroke-width="1.4" fill="none" marker-end="url(#ar2)"/>
+      <rect class="rbox ffn" x="150" y="148" width="150" height="44" rx="7"/>
+      <text x="225" y="174" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--sage)">Feed-Forward</text>
+      <circle cx="70" cy="210" r="9" fill="var(--bg)" stroke="var(--sage)" stroke-width="1.4"/>
+      <text x="70" y="214" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="var(--sage)">+</text>
+      <circle class="flowdot" cx="70" cy="240" r="5" fill="var(--accent)"/>
+      <defs>
+        <marker id="ar" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 z" fill="var(--accent)"/></marker>
+        <marker id="ar2" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 z" fill="var(--sage)"/></marker>
+      </defs>`;
+  })();
+
+  // stage 4: layernorm bars — raw vs normalized
+  const lnRaw=[0.8,-0.3,1.4,0.2,-0.9,0.5,1.1,-0.1];
+  const lnMean=lnRaw.reduce((a,b)=>a+b,0)/lnRaw.length;
+  const lnStd=Math.sqrt(lnRaw.reduce((a,b)=>a+(b-lnMean)*(b-lnMean),0)/lnRaw.length);
+  const lnNorm=lnRaw.map(v=>(v-lnMean)/lnStd);
+  (function(){
+    const box=document.getElementById('lnChart'); if(!box) return;
+    lnRaw.forEach(()=>{ const r=document.createElement('div'); r.className='lnr'; r.innerHTML='<div class="lnbar"></div>'; box.appendChild(r); });
+  })();
+  function setLN(values){
+    const bars=document.querySelectorAll('#lnChart .lnbar');
+    values.forEach((v,k)=>{
+      const bar=bars[k]; if(!bar) return;
+      const w=Math.min(Math.abs(v)*44,96);
+      bar.className='lnbar '+(v>=0?'pos':'neg');
+      bar.style.width=w+'px';
+    });
+  }
+
+  // stage 5: multi-head heatmaps
+  const headData=[
+    {name:'相邻',m:[[0.7,0.2,0.1],[0.2,0.6,0.2],[0.1,0.3,0.6]]},
+    {name:'主谓',m:[[0.5,0.4,0.1],[0.1,0.2,0.7],[0.6,0.3,0.1]]},
+    {name:'指代',m:[[0.6,0.3,0.1],[0.7,0.2,0.1],[0.2,0.6,0.2]]},
+    {name:'全局',m:[[0.34,0.33,0.33],[0.33,0.34,0.33],[0.33,0.33,0.34]]},
+  ];
+  (function(){
+    const box=document.getElementById('headsBox'); if(!box) return;
+    headData.forEach((h,hi)=>{
+      const u=document.createElement('div'); u.className='minihead';
+      u.innerHTML=`<div class="ht">head ${hi+1} · ${h.name}</div>`;
+      const g=document.createElement('div'); g.className='hgrid';
+      for(let r=0;r<3;r++)for(let c=0;c<3;c++){ const cell=document.createElement('div'); cell.className='hc'; cell.dataset.h=hi; cell.dataset.r=r; cell.dataset.c=c; g.appendChild(cell); }
+      u.appendChild(g); box.appendChild(u);
+    });
+  })();
+
+  // stage 6: gradient flow segments
+  (function(){
+    const noCol=document.getElementById('gNo'), yesCol=document.getElementById('gYes');
+    if(!noCol||!yesCol) return;
+    for(let k=0;k<8;k++){ const s=document.createElement('div'); s.className='gseg'; noCol.insertBefore(s,noCol.firstChild); }
+    for(let k=0;k<8;k++){ const s=document.createElement('div'); s.className='gseg'; yesCol.insertBefore(s,yesCol.firstChild); }
+  })();
+
+  // stage 8: 12-layer stack
+  (function(){
+    const box=document.getElementById('layerStack'); if(!box) return;
+    for(let k=12;k>=1;k--){ const d=document.createElement('div'); d.className='blk'; d.innerHTML=`<span>Block ${String(k).padStart(2,'0')}</span><span class="bn">Attn + FFN</span>`; box.appendChild(d); }
+  })();
+
+  // stage 9: mask grids
+  function buildMask(parent,title,desc,grid){
+    const u=document.createElement('div'); u.className='maskunit';
+    u.innerHTML=`<div class="mt">${title}</div>`;
+    const g=document.createElement('div'); g.className='attn'; g.style.gridTemplateColumns='repeat(3,1fr)';
+    grid.forEach(row=>row.forEach(v=>{ const c=document.createElement('div'); c.className='attn-c c'; c.dataset.on=v; g.appendChild(c); }));
+    u.appendChild(g);
+    const d=document.createElement('div'); d.className='md'; d.innerHTML=desc; u.appendChild(d);
+    parent.appendChild(u);
+  }
+  (function(){
+    const box=document.getElementById('masksBox'); if(!box) return;
+    buildMask(box,'双向 / Bi','BERT：人人可见',[[1,1,1],[1,1,1],[1,1,1]]);
+    buildMask(box,'因果 / Causal','GPT：只看左边',[[1,0,0],[1,1,0],[1,1,1]]);
+    buildMask(box,'交叉 / Cross','解码器 × 编码器',[[1,1,1],[1,1,1],[1,1,1]]);
+  })();
+
+  // ── per-stage effects (0-based index) ─────────────────────
+  function runStageEffect(i){
+    if(i===0){ const blks=document.querySelectorAll('#towerStack .blk'); blks.forEach((b,k)=>later(0,()=>b.classList.add('lit'),120+k*130)); }
+    if(i===1){ const cells=document.querySelectorAll('#embRow .vc'); cells.forEach((c,k)=>later(1,()=>c.classList.add('show'),100+k*55)); }
+    if(i===2){ const v=document.getElementById('peViz'); if(v) later(2,()=>v.classList.add('in-go'),60); }
+    if(i===3){ const v=document.getElementById('roadViz'); if(v) later(3,()=>v.classList.add('in-go'),200); }
+    if(i===4){
+      const st=document.getElementById('lnState');
+      later(4,()=>setLN(lnRaw),100);
+      later(4,()=>{ setLN(lnNorm); if(st) st.textContent='归一化后：均值 0、方差 1'; },1100);
+    }
+    if(i===5){
+      const cells=document.querySelectorAll('#headsBox .hc');
+      cells.forEach(c=>{
+        const h=+c.dataset.h, r=+c.dataset.r, cc=+c.dataset.c, a=headData[h].m[r][cc];
+        later(5,()=>{ c.style.background=`rgba(200,100,60,${0.12+a*0.78})`; }, 120+h*120+(r*3+cc)*30);
+      });
+    }
+    if(i===6){
+      const no=document.querySelectorAll('#gNo .gseg'), yes=document.querySelectorAll('#gYes .gseg');
+      // index 0 = bottom (deepest); top of column is the last DOM child. read top→bottom.
+      no.forEach((s,k)=>later(6,()=>{ s.style.opacity=Math.max(0.05, 0.9*Math.pow(0.62,k)); }, 120+k*90));
+      yes.forEach((s,k)=>later(6,()=>{ s.style.opacity=Math.max(0.55, 0.9-k*0.03); }, 120+k*90));
+    }
+    if(i===7){ document.querySelectorAll('#ffnBox .ffbar').forEach((b,k)=>later(7,()=>{ b.style.height=b.dataset.h+'px'; }, 120+k*180)); }
+    if(i===8){ document.querySelectorAll('#layerStack .blk').forEach((b,k)=>later(8,()=>b.classList.add('lit'),120+k*110)); }
+    if(i===9){
+      document.querySelectorAll('#masksBox .attn .c').forEach(c=>{
+        if(c.dataset.on==='1') later(9,()=>{ c.style.background='rgba(127,145,131,0.55)'; }, 100+Math.random()*500);
+      });
+    }
+    if(i===10){ animateProbs(stages[10]); }
+    if(i===11){
+      document.querySelectorAll('#ledgerFacts b[data-num]').forEach(el=>{
+        const target=+el.dataset.num, dec=+(el.dataset.dec||0), suffix=el.dataset.suffix||'';
+        if(reduceMotion){ el.textContent=target.toLocaleString('en-US')+suffix; return; }
+        el.textContent='0'+suffix; countUp(11,el,target,{dec,suffix,dur:1100});
+      });
+    }
+  }
+
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===0){ document.querySelectorAll('#towerStack .blk').forEach(b=>b.classList.remove('lit')); }
+    if(i===1){ document.querySelectorAll('#embRow .vc').forEach(c=>c.classList.remove('show')); }
+    if(i===2){ const v=document.getElementById('peViz'); if(v) v.classList.remove('in-go'); }
+    if(i===3){ const v=document.getElementById('roadViz'); if(v) v.classList.remove('in-go'); }
+    if(i===4){ setLN(lnRaw); const st=document.getElementById('lnState'); if(st) st.textContent='归一化前：参差、偏移'; }
+    if(i===5){ document.querySelectorAll('#headsBox .hc').forEach(c=>c.style.background=''); }
+    if(i===6){ document.querySelectorAll('#gFlow .gseg').forEach(s=>s.style.opacity=''); }
+    if(i===7){ document.querySelectorAll('#ffnBox .ffbar').forEach(b=>b.style.height='0'); }
+    if(i===8){ document.querySelectorAll('#layerStack .blk').forEach(b=>b.classList.remove('lit')); }
+    if(i===9){ document.querySelectorAll('#masksBox .attn .c').forEach(c=>c.style.background=''); }
+    if(i===10){ stages[10].querySelectorAll('.prob .bar i').forEach(el=>el.style.width=''); }
+    if(i===11){ document.querySelectorAll('#ledgerFacts b[data-num]').forEach(el=>{ const t=+el.dataset.num, s=el.dataset.suffix||''; el.textContent=t.toLocaleString('en-US')+s; }); }
+  }
+
+  // initialise static-but-pre-animation states (reduced-motion fallback shows final)
+  setLN(reduceMotion?lnNorm:lnRaw);
+  if(reduceMotion){
+    document.querySelectorAll('#towerStack .blk, #layerStack .blk').forEach(b=>b.classList.add('lit'));
+    document.querySelectorAll('#embRow .vc').forEach(c=>c.classList.add('show'));
+    document.querySelectorAll('#ffnBox .ffbar').forEach(b=>b.style.height=b.dataset.h+'px');
+    document.querySelectorAll('#headsBox .hc').forEach(c=>{ const h=+c.dataset.h,r=+c.dataset.r,cc=+c.dataset.c,a=headData[h].m[r][cc]; c.style.background=`rgba(200,100,60,${0.12+a*0.78})`; });
+    document.querySelectorAll('#masksBox .attn .c').forEach(c=>{ if(c.dataset.on==='1') c.style.background='rgba(127,145,131,0.55)'; });
+  }
+
+  // ── render math with KaTeX (deferred CDN) ──
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{
+        renderMathInElement(document.querySelector('main'),{
+          delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+          throwOnError:false, trust:true, strict:false
+        });
+      }catch(e){}
+    }
+  }
+  if(window.katex && window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded', renderAllMath);
+
+  updateProgress();
+})();
+</script>
+</body>
+</html>

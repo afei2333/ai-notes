@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tokenizer：文字与数字之间 · 原理手记</title>
+<meta name="description" content="BPE 是怎么把「世界」切成子词的？为什么模型数不清一个单词里有几个字母？从字节到 token，连合并循环一起算给你看。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .progress-wrap{display:flex;align-items:center;gap:0.9rem}
+  .progress-num{font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.1em}
+  .progress-num b{color:var(--accent);font-weight:500}
+  .progress-track{width:clamp(60px,12vw,140px);height:1px;background:var(--line-strong);position:relative}
+  .progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .9s cubic-bezier(.16,1,.3,1)}
+
+  /* ── side rail ───────────────────────────────────────────── */
+  .rail{position:fixed;left:clamp(1rem,2.5vw,2rem);top:50%;transform:translateY(-50%);z-index:40;display:flex;flex-direction:column;gap:0.85rem;opacity:0;transition:opacity .6s}
+  .rail.show{opacity:1}
+  .rail button{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.08em;transition:color .4s;padding:0}
+  .rail .dot{width:6px;height:6px;border-radius:50%;border:1px solid var(--ink-faint);transition:all .4s;flex:none}
+  .rail button .lbl{opacity:0;transform:translateX(-4px);transition:all .4s;white-space:nowrap}
+  .rail button:hover .lbl{opacity:1;transform:none}
+  .rail button.active{color:var(--accent)}
+  .rail button.active .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 4px rgba(200,100,60,0.12)}
+  .rail button.done .dot{border-color:var(--ink-dim);background:var(--ink-dim)}
+  @media(max-width:1024px){.rail{display:none}}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1040px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;font-size:clamp(2.8rem,8vw,6.2rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:48ch;margin-top:2.4rem;color:var(--ink);font-size:1.2rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub code{font-family:var(--mono);font-size:0.92em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:3.2rem;opacity:0;animation:rise 1s .65s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0}
+  .start-btn{margin-top:3.6rem;align-self:flex-start;cursor:pointer;background:none;border:1px solid var(--line-strong);color:var(--ink);font-family:var(--mono);font-size:0.78rem;letter-spacing:0.18em;text-transform:uppercase;padding:1.05rem 2.2rem;border-radius:2rem;display:flex;align-items:center;gap:0.9rem;transition:all .5s cubic-bezier(.16,1,.3,1);opacity:0;animation:rise 1s .8s forwards}
+  .start-btn:hover{border-color:var(--accent);color:var(--accent);gap:1.4rem;padding-right:2.6rem}
+  .start-btn .arc{width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center;font-size:0.8rem;transition:transform .5s}
+  .start-btn:hover .arc{transform:rotate(90deg)}
+
+  /* ── flow / stages ───────────────────────────────────────── */
+  .flow{position:relative;padding-bottom:6rem}
+  .spine{position:absolute;left:clamp(14px,3.5vw,38px);top:0;bottom:0;width:1px;background:var(--line)}
+  .spine .lit{position:absolute;inset:0 auto auto 0;width:1px;height:0;background:linear-gradient(var(--accent),var(--sage));transition:height 1s cubic-bezier(.16,1,.3,1)}
+  @media(max-width:680px){.spine{display:none}}
+  .stage{position:relative;padding:clamp(2.5rem,6vw,5rem) 0 clamp(2.5rem,6vw,5rem) clamp(48px,9vw,110px);border-bottom:1px solid var(--line);scroll-margin-top:78px}
+  @media(max-width:680px){.stage{padding-left:0}}
+  .stage[hidden]{display:none}
+  .stage.in .reveal{opacity:1;transform:none}
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.12s}.reveal.d2{transition-delay:.24s}.reveal.d3{transition-delay:.36s}.reveal.d4{transition-delay:.48s}
+  .stage .node{position:absolute;left:clamp(8px,3.5vw,32px);top:clamp(2.7rem,6vw,5.2rem);width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-faint);transition:all .6s}
+  .stage.in .node{border-color:var(--accent);box-shadow:0 0 0 5px rgba(200,100,60,0.1)}
+  .stage.in .node::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+  @media(max-width:680px){.stage .node{display:none}}
+  .stage-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .stage-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .stage-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .stage-phase{margin-left:auto;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint);border:1px solid var(--line);padding:0.3rem 0.7rem;border-radius:1rem}
+  .stage-phase.key{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .stage h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.8rem,4.4vw,3rem);line-height:1.1;letter-spacing:-0.01em}
+  .stage .desc{max-width:54ch;margin-top:1.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.95}
+  .stage .desc b{color:var(--accent-soft);font-weight:500}
+  .stage .desc code,.note code,.desc code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft)}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.4rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.2rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* ── reusable components ─────────────────────────────────── */
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .chip{font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);transition:all .4s}
+  .stage.in .chip{animation:pop .6s backwards}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.8rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.5rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.06em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .learns{display:flex;flex-direction:column;gap:0.55rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.95rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.6rem 0.95rem;background:var(--chip-bg)}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.6rem;font-family:var(--mono);font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase}
+  .steps{display:flex;flex-direction:column;gap:0}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.5rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.72rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);width:27px;height:27px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--mono);font-size:0.95rem}
+  .step .sc em{font-family:var(--sans);font-style:normal;font-size:0.85rem;color:var(--ink-dim);margin-left:0.6rem}
+  .step:not(:last-child)::before{content:"";position:absolute;left:13px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+
+  /* ── custom: token flow lanes (hero + byte-level) ────────── */
+  .tok-flow{display:flex;flex-direction:column;gap:0.4rem}
+  .lane{display:flex;align-items:center;gap:0.7rem;flex-wrap:wrap}
+  .lane-lab{font-family:var(--mono);font-size:0.58rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-faint);width:108px;flex:none;text-align:right}
+  .tchip{font-family:var(--mono);font-size:0.8rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.45rem;padding:0.4rem 0.7rem;background:var(--chip-bg)}
+  .tchip.big{font-family:var(--serif);font-size:1.4rem;padding:0.25rem 0.85rem}
+  .tchip.byte{color:var(--sage);border-color:rgba(127,145,131,0.45)}
+  .tchip.id{color:var(--accent-soft);border-color:rgba(200,100,60,0.45)}
+  .lane.sub .tchip{opacity:0;transform:translateY(8px);transition:opacity .5s cubic-bezier(.16,1,.3,1),transform .5s cubic-bezier(.16,1,.3,1)}
+  .lane.sub.on .tchip{opacity:1;transform:none}
+  .flow-arrow{font-family:var(--mono);color:var(--ink-faint);font-size:0.85rem;padding-left:116px;line-height:1}
+
+  /* ── custom: two-up compare (dead ends) ──────────────────── */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:620px){.compare{grid-template-columns:1fr}}
+  .col{border:1px solid var(--line);border-radius:10px;padding:1.1rem;background:var(--chip-bg)}
+  .col h4{font-family:var(--mono);font-size:0.66rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent);margin-bottom:0.85rem;font-weight:500}
+  .col .demo{display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.9rem}
+  .col .fail{font-family:var(--sans);font-size:0.92rem;color:var(--ink-dim);line-height:1.7}
+  .col .fail b{color:var(--accent-soft);font-weight:500}
+  .minic{font-family:var(--mono);font-size:0.72rem;color:var(--ink);border:1px solid var(--line);border-radius:0.35rem;padding:0.26rem 0.46rem;background:var(--box-bg)}
+  .minic.unk{color:var(--accent);border-color:var(--accent)}
+
+  /* ── custom: BPE word rows (corpus / merge loop / encode) ── */
+  .wordrow{display:flex;align-items:center;gap:0.7rem;margin:0.4rem 0}
+  .wfreq{font-family:var(--mono);font-size:0.64rem;color:var(--ink-faint);width:32px;flex:none;text-align:right}
+  .wcells{display:flex;gap:0.3rem;flex-wrap:wrap}
+  .sym{font-family:var(--mono);font-size:0.8rem;color:var(--ink);background:var(--chip-bg);border:1px solid var(--line);border-radius:5px;padding:0.32rem 0.5rem;min-width:30px;text-align:center;transition:background .4s,border-color .4s,color .4s,transform .4s,opacity .4s}
+  .sym .eow{color:var(--ink-faint);opacity:0.55;margin-left:1px}
+  .sym.pair{background:rgba(200,100,60,0.2);border-color:var(--accent);color:var(--accent-soft);transform:translateY(-2px)}
+  .sym.merged{background:rgba(127,145,131,0.22);border-color:var(--sage);color:var(--sage);transform:translateY(-2px)}
+  .pcount{margin-top:1.1rem;font-family:var(--mono);font-size:0.82rem;color:var(--accent-soft)}
+  .pcount b{color:var(--accent)}
+
+  /* ── custom: merge log ───────────────────────────────────── */
+  .mergelog{margin-top:1.4rem;display:flex;flex-direction:column}
+  .lrow{display:grid;grid-template-columns:46px 1fr 58px 1fr;gap:0.6rem;align-items:center;padding:0.5rem 0.2rem;border-top:1px solid var(--line);font-family:var(--mono);font-size:0.78rem;color:var(--ink)}
+  .lrow.head{color:var(--ink-faint);font-size:0.58rem;letter-spacing:0.1em;text-transform:uppercase;border-top:none}
+  .lrow .rno{color:var(--accent)}
+  .lrow .pr{color:var(--accent-soft)}
+  .lrow .res{color:var(--sage)}
+  .lrow.body{opacity:0;transform:translateX(-6px);transition:opacity .5s,transform .5s}
+  .lrow.body.on{opacity:1;transform:none}
+
+  /* ── custom: encode result chips ─────────────────────────── */
+  .result{margin-top:1.2rem;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;opacity:0;transition:opacity .6s}
+  .result.show{opacity:1}
+  .result .rl{font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.1em}
+  .rtok{font-family:var(--mono);font-size:0.86rem;color:var(--sage);border:1px solid rgba(127,145,131,0.5);border-radius:0.45rem;padding:0.36rem 0.65rem;background:var(--chip-bg)}
+
+  /* ── custom: spell view (strawberry) ─────────────────────── */
+  .spell{display:flex;flex-direction:column;gap:1rem}
+  .spell-row{display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap}
+  .spell-lab{font-family:var(--mono);font-size:0.58rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-faint);width:78px;flex:none;text-align:right;margin-right:0.3rem}
+  .lcell{font-family:var(--mono);font-size:0.82rem;color:var(--ink);border:1px solid var(--line);border-radius:5px;width:30px;height:34px;display:grid;place-items:center;background:var(--chip-bg)}
+  .lcell.r{color:var(--accent);border-color:var(--accent);background:rgba(200,100,60,0.16)}
+  .spell-row.tokens .chunk{opacity:0;transform:translateY(8px);transition:opacity .5s cubic-bezier(.16,1,.3,1),transform .5s cubic-bezier(.16,1,.3,1)}
+  .spell.show .spell-row.tokens .chunk{opacity:1;transform:none}
+  .chunk{font-family:var(--mono);font-size:0.82rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:6px;padding:0.42rem 0.7rem;background:var(--box-bg);text-align:center}
+  .chunk span{display:block;font-size:0.56rem;color:var(--ink-faint);margin-top:0.28rem}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5;opacity:0;transition:opacity 1s}
+  .finale.show{opacity:1}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:32ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+  .replay{margin:2.4rem auto 0;display:block;cursor:pointer;background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.16em;text-transform:uppercase;transition:color .4s;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .replay:hover{color:var(--accent)}
+
+  /* ── controls ────────────────────────────────────────────── */
+  .auto-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:1rem;transition:all .4s}
+  .auto-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auto-btn.on{border-color:var(--sage);color:var(--sage)}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.lane.sub .tchip,.spell-row.tokens .chunk,.result{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">分词 · <b>BPE 与子词</b></div>
+    </div>
+    <div class="progress-wrap">
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="auto-btn" id="autoBtn">自动播放</button>
+      <div class="progress-num"><b id="pNum">00</b> / 10</div>
+      <div class="progress-track"><div class="progress-fill" id="pFill"></div></div>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail"></nav>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="kicker">A Field Guide · 分词 / Tokenizer</div>
+      <h1>
+        <span class="l">模型不识字，</span>
+        <span class="l">只认<em>数字</em>。</span>
+      </h1>
+      <p class="sub">Transformer 内部全是矩阵乘法——它从不认识「世界」，只认识一串整数。把文字切成 token、再翻回文字的这一层叫 <code>tokenizer</code>；它怎么切，悄悄决定了模型的算力、价格，甚至能不能数清一个词里有几个字母。</p>
+      <div class="meta">
+        <div><b>256</b>字节级字母表</div>
+        <div><b>~100k</b>GPT-4 词表</div>
+        <div><b>10</b>拆解阶段</div>
+      </div>
+      <button class="start-btn" id="startBtn">开始 <span class="arc">↓</span></button>
+    </section>
+
+    <section class="flow" id="flow">
+      <div class="spine"><div class="lit" id="lit"></div></div>
+
+      <!-- STAGE 0 -->
+      <article class="stage" data-phase="入口">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">01</span><span class="stage-en">Text → Numbers</span><span class="stage-phase">入口</span></div>
+        <h2 class="reveal d1">一切的起点：把字变成数</h2>
+        <p class="desc reveal d1">神经网络只会做一件事——对一堆数字做乘加。所以你打的每个字，进网络前都要先被翻译成一串整数 <code>token ID</code>。以「世界」为例：先按 UTF-8 拆成字节，再被合并、查表，成为模型真正读到的东西。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">「世界」是怎么变成数字的</div>
+          <div class="tok-flow">
+            <div class="lane"><span class="lane-lab">文字</span><span class="tchip big">世</span><span class="tchip big">界</span></div>
+            <div class="flow-arrow">↓ 按 UTF-8 拆成字节</div>
+            <div class="lane sub"><span class="lane-lab">字节</span><span class="tchip byte">E4</span><span class="tchip byte">B8</span><span class="tchip byte">96</span><span class="tchip byte">E7</span><span class="tchip byte">95</span><span class="tchip byte">8C</span></div>
+            <div class="flow-arrow">↓ 合并 + 查表</div>
+            <div class="lane sub"><span class="lane-lab">token ID（示意）</span><span class="tchip id">30087</span><span class="tchip id">55642</span></div>
+          </div>
+          <div class="note">反过来，模型吐出的也是 ID，再由同一张表翻译回文字显示给你。整篇要回答两件事：<b>「世界」凭什么这样切</b>，以及 <b>strawberry 里到底有几个 r</b>。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 1 -->
+      <article class="stage" data-phase="动机">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">Two Dead Ends</span><span class="stage-phase">动机</span></div>
+        <h2 class="reveal d1">两条看似显然、却走不通的路</h2>
+        <p class="desc reveal d1">要把文字变成 token，最直觉的两种切法，各自撞上一堵墙。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">字符级 vs 词级 · 两种极端</div>
+          <div class="compare">
+            <div class="col">
+              <h4>① 字符级 / char-level</h4>
+              <div class="demo"><span class="minic">T</span><span class="minic">r</span><span class="minic">a</span><span class="minic">n</span><span class="minic">s</span><span class="minic">f</span><span class="minic">o</span><span class="minic">r</span><span class="minic">m</span><span class="minic">e</span><span class="minic">r</span></div>
+              <div class="fail">词表只要几十个，但一个词就被撑成 11 个 token。注意力是 <b>O(n²)</b>，序列越长越烧算力，还得让模型从零学会拼写。</div>
+            </div>
+            <div class="col">
+              <h4>② 词级 / word-level</h4>
+              <div class="demo"><span class="minic">run</span><span class="minic">running</span><span class="minic">runner</span><span class="minic unk">&lt;UNK&gt;</span></div>
+              <div class="fail">词表几百万也装不下所有词，遇到新词、错字、专有名词只能吐 <b>&lt;UNK&gt;</b>；而且 run / running / runner 被当成三个无关的词，学不到它们同源。</div>
+            </div>
+          </div>
+          <div class="note">一个太碎、一个太僵。真正的解法在两者<b>中间</b>。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 2 -->
+      <article class="stage" data-phase="思路">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">The Subword Sweet Spot</span><span class="stage-phase key">思路</span></div>
+        <h2 class="reveal d1">子词：在两堵墙之间找平衡</h2>
+        <p class="desc reveal d1">BPE（Byte Pair Encoding，字节对编码）走中间路线：<b>常见词整块当一个 token，生僻词拆成可复用的碎片</b>。词表固定在几万量级，既不爆炸，也几乎不再有 &lt;UNK&gt;。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">真实词表大小</div>
+          <div class="facts">
+            <div class="fact"><b data-num="50257">50,257</b><span>GPT-2</span></div>
+            <div class="fact"><b data-num="100277">100,277</b><span>GPT-4 · cl100k</span></div>
+            <div class="fact"><b data-num="128000">128,000</b><span>Llama 3</span></div>
+          </div>
+          <div class="chips" style="margin-top:1.1rem"><span class="chip">tokenization</span><span class="chip">→</span><span class="chip">token</span><span class="chip">+</span><span class="chip">ization</span></div>
+          <div class="note">英文里一个 token 平均约 <b>4 个字符</b>、约 0.75 个词——常用词基本一词一 token，长尾词才被拆开。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 3 -->
+      <article class="stage" data-phase="训练 ①">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Training BPE · Setup</span><span class="stage-phase">训练 ①</span></div>
+        <h2 class="reveal d1">BPE 怎么学：先看一份小语料</h2>
+        <p class="desc reveal d1">训练不需要神经网络，只需要数数。拿四个词当玩具语料（右上角是词频），每个词先拆成字符、末尾加一个词尾标记 <code>·</code>（即 &lt;/w&gt;），然后统计所有<b>相邻符号对</b>出现了多少次。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">玩具语料 · 拆成字符后统计相邻对</div>
+          <div id="corpusWords"></div>
+          <div class="pcount" id="pairCount">出现最多的相邻对是 <b>(e, s)</b>——在 newest 与 widest 里共 <b>10</b> 次。</div>
+          <div class="note">把所有词里的相邻对按词频加权计数后，<code>(e, s)</code> 拔得头筹——下一步就合并它。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 4 -->
+      <article class="stage" data-phase="训练 ②">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">The Merge Loop</span><span class="stage-phase key">训练 ②</span></div>
+        <h2 class="reveal d1">合并循环：高频对，反复粘合</h2>
+        <p class="desc reveal d1">规则就三句话：<b>数出最高频的相邻对 → 把它粘成一个新符号 → 重复</b>。频次相同就按字典序取靠前的一对（保证确定性）。看着 <code>est·</code> 这个真实的英语后缀、和 <code>low</code> 这个词，自己从字符里长出来。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">每轮：高亮最高频对 → 合并 → 记一条规则</div>
+          <div id="bpeWords"></div>
+          <div class="mergelog">
+            <div class="lrow head"><span>轮次</span><span>最高频对</span><span>频次</span><span>新符号</span></div>
+            <div class="lrow body"><span class="rno">1</span><span class="pr">e + s</span><span>10</span><span class="res">es</span></div>
+            <div class="lrow body"><span class="rno">2</span><span class="pr">es + t</span><span>10</span><span class="res">est</span></div>
+            <div class="lrow body"><span class="rno">3</span><span class="pr">est + ·</span><span>10</span><span class="res">est·</span></div>
+            <div class="lrow body"><span class="rno">4</span><span class="pr">l + o</span><span>7</span><span class="res">lo</span></div>
+            <div class="lrow body"><span class="rno">5</span><span class="pr">lo + w</span><span>7</span><span class="res">low</span></div>
+          </div>
+          <div class="note">停在第 5 步只是为了看清楚；真实训练会重复几万次，直到词表到达目标大小。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 5 -->
+      <article class="stage" data-phase="产物">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">The Merges Are the Model</span><span class="stage-phase">产物</span></div>
+        <h2 class="reveal d1">训练的全部产物：一张有序的表</h2>
+        <p class="desc reveal d1">BPE「模型」里没有权重、没有梯度——只有<b>一张按学习顺序排好的合并规则表</b>，外加由此得到的词表。用的时候纯粹是查表，而且顺序不能乱。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">学到的 5 条规则（顺序即一切）</div>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div class="sc"><b>e + s → es</b><em>第一个被记下的规则</em></div></div>
+            <div class="step"><span class="si">2</span><div class="sc"><b>es + t → est</b><em>复用了上一条的 es</em></div></div>
+            <div class="step"><span class="si">3</span><div class="sc"><b>est + · → est·</b><em>粘上词尾，长出后缀</em></div></div>
+            <div class="step"><span class="si">4</span><div class="sc"><b>l + o → lo</b><em>换一条主线</em></div></div>
+            <div class="step"><span class="si">5</span><div class="sc"><b>lo + w → low</b><em>整个词 low 成形</em></div></div>
+          </div>
+          <div class="note">顺序为什么重要？因为后面的合并<b>依赖前面的结果</b>——es 得先存在，才谈得上 es + t。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 6 -->
+      <article class="stage" data-phase="应用">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Encoding a New Word</span><span class="stage-phase">应用</span></div>
+        <h2 class="reveal d1">编码：把表套到没见过的词上</h2>
+        <p class="desc reveal d1">训练里<b>从没出现过</b> lowest 这个词。没关系——把它拆成字符，照着合并表从头到尾套一遍，能合就合：</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">lowest · 依次套用 5 条规则</div>
+          <div id="encodeWord"></div>
+          <div class="result" id="encodeResult"><span class="rl">结果</span><span class="rtok">low</span><span class="rtok">est·</span><span class="rl">2 个 token</span></div>
+          <div class="note">未知词被拆成两个学过、还恰好是真实语素的碎片：<code>low</code> + <code>est·</code>。这就是子词对新词的<b>泛化</b>——既不 &lt;UNK&gt;，又复用了已知部件。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 7 -->
+      <article class="stage" data-phase="工程">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">Byte-level BPE</span><span class="stage-phase key">工程</span></div>
+        <h2 class="reveal d1">字节级 BPE：为什么再也没有 &lt;UNK&gt;</h2>
+        <p class="desc reveal d1">真实的 GPT 系 tokenizer 不在「字符」上做 BPE，而在<b>字节</b>上——基础字母表就是 0–255 这 256 个字节。于是任何字符串（中文、emoji、乱码）都先变成字节，<b>天生可编码，永远不会 &lt;UNK&gt;</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">「世界」的字节级编码</div>
+          <div class="tok-flow">
+            <div class="lane"><span class="lane-lab">字符</span><span class="tchip big">世</span><span class="tchip big">界</span></div>
+            <div class="flow-arrow">↓ 每个汉字 = 3 个 UTF-8 字节</div>
+            <div class="lane sub"><span class="lane-lab">UTF-8 字节</span><span class="tchip byte">E4</span><span class="tchip byte">B8</span><span class="tchip byte">96</span><span class="tchip byte">E7</span><span class="tchip byte">95</span><span class="tchip byte">8C</span></div>
+            <div class="flow-arrow">↓ BPE 合并 + 查表</div>
+            <div class="lane sub"><span class="lane-lab">token（示意）</span><span class="tchip id">30087</span><span class="tchip id">55642</span></div>
+          </div>
+          <div class="note">代价：一个汉字要 3 个字节起步，所以同样一句话，<b>中文通常比英文更费 token</b>——更贵，也更快填满上下文窗口。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 8 -->
+      <article class="stage" data-phase="后果">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Why It Miscounts</span><span class="stage-phase">后果</span></div>
+        <h2 class="reveal d1">strawberry 里有几个 r？</h2>
+        <p class="desc reveal d1">模型常答错，不是笨，是<b>根本看不见字母</b>。这个词被切成两三个子词块，每块在模型眼里只是一个不透明的整数 ID；要数 r，它得凭记忆还原每个 ID 背后的拼写、再做字符算术——而它并没有被专门训练去做这件事。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">两种视角 · 同一个词</div>
+          <div class="spell" id="spell">
+            <div class="spell-row">
+              <span class="spell-lab">字母视角</span>
+              <span class="lcell">s</span><span class="lcell">t</span><span class="lcell r">r</span><span class="lcell">a</span><span class="lcell">w</span><span class="lcell">b</span><span class="lcell">e</span><span class="lcell r">r</span><span class="lcell r">r</span><span class="lcell">y</span>
+            </div>
+            <div class="spell-row tokens">
+              <span class="spell-lab">token 视角</span>
+              <span class="chunk">str<span>ID 1156（示意）</span></span><span class="chunk">aw<span>ID 707（示意）</span></span><span class="chunk">berry<span>ID 15717（示意）</span></span>
+            </div>
+          </div>
+          <div class="note">人一眼数出 <b>3 个 r</b>；模型看到的却是三个不透明的整数。同源的弱点还有多位数加法、玩字母游戏——根子都在：<b>token 不是字母</b>。</div>
+        </div>
+      </article>
+
+      <!-- STAGE 9 -->
+      <article class="stage" data-phase="收束">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">10</span><span class="stage-en">Tokens Are the Atoms</span><span class="stage-phase">收束</span></div>
+        <h2 class="reveal d1">token，是模型的原子</h2>
+        <p class="desc reveal d1">从输入到输出，模型世界的最小单位始终是 token。它同时是三样东西：</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">为什么 token 无处不在</div>
+          <div class="learns">
+            <div class="learn"><i>计价</i>API 按 token 收费，输入与输出分别计数。</div>
+            <div class="learn"><i>上下文</i>上下文窗口的刻度就是 token 数——不是字数。</div>
+            <div class="learn"><i>能力</i>拼写、计数的短板，都源于「看不见字母」。</div>
+          </div>
+          <div class="note">先有分词，才有理解——你输入的每句话，都是先被切碎，才被读懂的。</div>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Walkthrough</div>
+      <h3>模型从不读字，只读它自己切出来的碎片。</h3>
+      <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
+      <button class="replay" id="replayBtn">↺ 再看一遍</button>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  const stages=Array.from(document.querySelectorAll('.stage'));
+  const rail=document.getElementById('rail');
+  const pNum=document.getElementById('pNum'), pFill=document.getElementById('pFill'), lit=document.getElementById('lit');
+  const startBtn=document.getElementById('startBtn'), autoBtn=document.getElementById('autoBtn');
+  const finale=document.getElementById('finale'), replayBtn=document.getElementById('replayBtn');
+  let current=-1, auto=false, autoTimer=null;
+  const railLabels=['只吃数字','两条死路','子词折中','训练起点','合并循环','一张合并表','编码新词','字节级','数不清的 r','token 是原子'];
+
+  railLabels.forEach((lbl,i)=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="dot"></span><span class="lbl">${String(i+1).padStart(2,'0')} ${lbl}</span>`;
+    b.addEventListener('click',()=>{ stages[i].scrollIntoView({behavior:'smooth',block:'start'}); });
+    rail.appendChild(b);
+  });
+  const railBtns=Array.from(rail.children);
+
+  function updateProgress(){
+    const n=current+1;
+    pNum.textContent=String(n).padStart(2,'0');
+    pFill.style.width=(n/stages.length*100)+'%';
+    lit.style.height=(n/stages.length*100)+'%';
+    railBtns.forEach((b,i)=>{ b.classList.toggle('active',i===current); b.classList.toggle('done',i<current); });
+  }
+
+  // scroll-driven reveal: replay effects EVERY time a stage enters view,
+  // reset them when it leaves — never just the first time.
+  const revealObserver=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){
+          e.target.classList.add('in');
+          resetStageEffect(idx);
+          runStageEffect(idx);
+        }
+      } else if(e.target.classList.contains('in')){
+        e.target.classList.remove('in');
+        resetStageEffect(idx);
+      }
+    });
+  },{threshold:0,rootMargin:'0px 0px -20% 0px'});
+  stages.forEach(s=>revealObserver.observe(s));
+
+  new IntersectionObserver((entries)=>{ entries.forEach(e=>{ if(e.isIntersecting) finale.classList.add('show'); }); },{threshold:0.3}).observe(finale);
+
+  let ticking=false;
+  window.addEventListener('scroll',()=>{
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const line=window.innerHeight*0.45; let idx=-1;
+      stages.forEach((s,i)=>{ if(s.getBoundingClientRect().top<=line) idx=i; });
+      if(idx!==current){ current=idx; updateProgress(); }
+      if(current>=0) rail.classList.add('show');
+      ticking=false;
+    });
+  },{passive:true});
+
+  startBtn.addEventListener('click',()=>{ rail.classList.add('show'); stages[0].scrollIntoView({behavior:'smooth',block:'start'}); });
+
+  function autoTick(){
+    if(!auto) return;
+    const next=current+1;
+    if(next>=stages.length){ finale.scrollIntoView({behavior:'smooth',block:'center'}); stopAuto(); return; }
+    stages[next].scrollIntoView({behavior:'smooth',block:'start'});
+    autoTimer=setTimeout(autoTick,5200);
+  }
+  function stopAuto(){ auto=false; autoBtn.classList.remove('on'); autoBtn.textContent='自动播放'; if(autoTimer)clearTimeout(autoTimer); }
+  autoBtn.addEventListener('click',()=>{ if(auto){ stopAuto(); return; } auto=true; autoBtn.classList.add('on'); autoBtn.textContent='■ 停止'; rail.classList.add('show'); autoTick(); });
+
+  replayBtn.addEventListener('click',()=>{
+    stopAuto();
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
+    finale.classList.remove('show');
+    current=-1; updateProgress();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  // ── replayable per-stage animation engine ──
+  const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){ (timers[i]||[]).forEach(clearTimeout); timers[i]=[]; (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[]; }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+  function countUp(i,el,target,{dur=900,dec=2}={}){
+    const start=performance.now();
+    const step=now=>{ const t=Math.min(1,(now-start)/dur), e=1-Math.pow(1-t,3);
+      el.textContent = dec===0 ? Math.round(target*e).toLocaleString('en-US') : (target*e).toFixed(dec);
+      if(t<1)(rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step)); };
+    (rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+  }
+
+  // ── BPE data + helpers (shared by stages 3 / 4 / 6) ──
+  const BPE_INIT=[
+    {f:5, symbols:['l','o','w','</w>']},
+    {f:2, symbols:['l','o','w','e','r','</w>']},
+    {f:6, symbols:['n','e','w','e','s','t','</w>']},
+    {f:4, symbols:['w','i','d','e','s','t','</w>']},
+  ];
+  const BPE_MERGES=[['e','s'],['es','t'],['est','</w>'],['l','o'],['lo','w']];
+  function applyOne(states,[a,b]){
+    return states.map(st=>{ const out=[]; const s=st.symbols;
+      for(let k=0;k<s.length;k++){ if(s[k]===a && s[k+1]===b){ out.push(a+b); k++; } else out.push(s[k]); }
+      return {f:st.f, symbols:out}; });
+  }
+  // snapshots: SNAP[k] = state after k merges
+  const BPE_SNAP=[BPE_INIT];
+  BPE_MERGES.forEach(m=>BPE_SNAP.push(applyOne(BPE_SNAP[BPE_SNAP.length-1],m)));
+  const ENC_SNAP=[[{f:null,symbols:['l','o','w','e','s','t','</w>']}]];
+  BPE_MERGES.forEach(m=>ENC_SNAP.push(applyOne(ENC_SNAP[ENC_SNAP.length-1],m)));
+
+  function symHTML(s){ return s.split('</w>').join('<span class="eow">·</span>'); }
+  function renderWords(container, states, hl){
+    container.innerHTML='';
+    states.forEach(st=>{
+      const row=document.createElement('div'); row.className='wordrow';
+      if(st.f!=null){ const f=document.createElement('span'); f.className='wfreq'; f.textContent='×'+st.f; row.appendChild(f); }
+      const cells=document.createElement('div'); cells.className='wcells';
+      const mark=new Set();
+      if(hl && hl.type==='pair'){ for(let k=0;k<st.symbols.length-1;k++){ if(st.symbols[k]===hl.a && st.symbols[k+1]===hl.b){ mark.add(k); mark.add(k+1); } } }
+      st.symbols.forEach((sym,idx)=>{
+        const c=document.createElement('span'); c.className='sym'; c.innerHTML=symHTML(sym);
+        if(mark.has(idx)) c.classList.add('pair');
+        if(hl && hl.type==='merged' && sym===hl.sym) c.classList.add('merged');
+        cells.appendChild(c);
+      });
+      row.appendChild(cells); container.appendChild(row);
+    });
+  }
+
+  // ── per-stage animations (0-based index) ──
+  function runStageEffect(i){
+    if(reduceMotion) return;            // static fallback already shows everything (see resetStageEffect)
+    if(i===0 || i===7){
+      const subs=stages[i].querySelectorAll('.lane.sub');
+      subs.forEach(l=>l.classList.remove('on'));
+      subs.forEach((l,k)=>later(i,()=>l.classList.add('on'), 450+k*650));
+    }
+    if(i===2){
+      stages[2].querySelectorAll('.fact b').forEach(el=>{ const n=+el.dataset.num; el.textContent='0'; countUp(i,el,n,{dur:1100,dec:0}); });
+    }
+    if(i===3){
+      const c=document.getElementById('corpusWords');
+      renderWords(c, BPE_INIT);
+      const cells=Array.from(c.querySelectorAll('.sym'));
+      cells.forEach((el,k)=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; later(i,()=>{ el.style.opacity=''; el.style.transform=''; }, 120+k*40); });
+      const done=160+cells.length*40;
+      later(i,()=>renderWords(c, BPE_INIT, {type:'pair',a:'e',b:'s'}), done+350);
+      const pc=document.getElementById('pairCount'); pc.style.opacity='0'; later(i,()=>{ pc.style.transition='opacity .6s'; pc.style.opacity=''; }, done+550);
+    }
+    if(i===4){
+      const words=document.getElementById('bpeWords');
+      const lrows=stages[4].querySelectorAll('.lrow.body');
+      lrows.forEach(r=>r.classList.remove('on'));
+      renderWords(words, BPE_SNAP[0]);
+      let t=600;
+      BPE_MERGES.forEach((m,k)=>{
+        later(i,()=>renderWords(words, BPE_SNAP[k], {type:'pair',a:m[0],b:m[1]}), t); t+=800;
+        later(i,()=>{ renderWords(words, BPE_SNAP[k+1], {type:'merged',sym:m[0]+m[1]}); lrows[k].classList.add('on'); }, t); t+=950;
+      });
+      later(i,()=>renderWords(words, BPE_SNAP[BPE_SNAP.length-1]), t);
+    }
+    if(i===6){
+      const w=document.getElementById('encodeWord'), res=document.getElementById('encodeResult');
+      res.classList.remove('show');
+      renderWords(w, ENC_SNAP[0]);
+      let t=600;
+      BPE_MERGES.forEach((m,k)=>{
+        later(i,()=>renderWords(w, ENC_SNAP[k], {type:'pair',a:m[0],b:m[1]}), t); t+=750;
+        later(i,()=>renderWords(w, ENC_SNAP[k+1], {type:'merged',sym:m[0]+m[1]}), t); t+=850;
+      });
+      later(i,()=>{ renderWords(w, ENC_SNAP[ENC_SNAP.length-1]); res.classList.add('show'); }, t);
+    }
+    if(i===8){
+      const sp=document.getElementById('spell'); sp.classList.remove('show'); later(i,()=>sp.classList.add('show'), 650);
+    }
+  }
+
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===0 || i===7) stages[i].querySelectorAll('.lane.sub').forEach(l=>l.classList.add('on'));
+    if(i===2) stages[2].querySelectorAll('.fact b').forEach(el=>{ el.textContent=(+el.dataset.num).toLocaleString('en-US'); });
+    if(i===3){ const c=document.getElementById('corpusWords'); renderWords(c, BPE_INIT, {type:'pair',a:'e',b:'s'}); const pc=document.getElementById('pairCount'); pc.style.opacity=''; }
+    if(i===4){ renderWords(document.getElementById('bpeWords'), BPE_SNAP[BPE_SNAP.length-1]); stages[4].querySelectorAll('.lrow.body').forEach(r=>r.classList.add('on')); }
+    if(i===6){ renderWords(document.getElementById('encodeWord'), ENC_SNAP[ENC_SNAP.length-1]); document.getElementById('encodeResult').classList.add('show'); }
+    if(i===8) document.getElementById('spell').classList.add('show');
+  }
+
+  updateProgress();
+})();
+</script>
+</body>
+</html>
