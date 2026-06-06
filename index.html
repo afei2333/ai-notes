@@ -349,21 +349,31 @@
       no:'02', status:'published', slug:'posts/attention-mechanism.html', featured:false,
       kicker:'交互长文 · Interactive',
       title:'注意力机制，逐矩阵拆解',
-      dek:'Q、K、V 到底是什么？为什么要除以 √dₖ？softmax 之后又发生了什么？用一句三个字的话「猫很累」，把一次 self-attention 连数字一起、一格一格地算给你看。',
+      dek:'Q、K、V 到底是什么？为什么要除以根号 dₖ 做缩放？softmax 之后又发生了什么？用一句三个字的话「猫很累」，把一次 self-attention 连数字一起、一格一格地算给你看。',
       tags:['Transformer','注意力','Self-Attention','线性代数','Softmax'],
       meta:['10 步拆解','滚动叙事','约 10 分钟']
     },
     {
-      no:'03', status:'soon',
+      no:'03', status:'published', slug:'posts/backpropagation.html', featured:false,
+      kicker:'交互长文 · Interactive',
       title:'反向传播：梯度如何流动',
-      dek:'链式法则不是公式，是一条信息逆流的河。跟着一个误差信号，看它如何从损失一路回溯，告诉每个参数该往哪挪。',
-      tags:['Backprop','微积分','优化器']
+      dek:'链式法则不是公式，是一条信息逆流的河。跟着一个可手算的双输入神经元，看梯度如何从损失一路倒流，连数字一起算给你看——前向缓存、链式相消、梯度倒流、门的路由，到一步把损失从 0.072 压到 0.006。',
+      tags:['Backprop','梯度','链式法则','训练'],
+      meta:['9 幕拆解','滚动叙事','约 12 分钟']
     },
     {
       no:'04', status:'soon',
       title:'Tokenizer：文字与数字之间',
       dek:'BPE 是怎么把「世界」切成子词的？为什么模型数不清一个单词里有几个字母？从字节到 token 的全过程。',
       tags:['BPE','分词','编码']
+    },
+    {
+      no:'05', status:'published', slug:'posts/kv-cache.html', featured:false,
+      kicker:'交互长文 · Interactive',
+      title:'KV 缓存，逐步拆开',
+      dek:'LLM 逐字蹦出答案还能这么快，靠的是 KV 缓存——把「每一步重算整段历史」省成「每步只算一个新词」。从自回归的浪费，到「过去的 K、V 永不改变」这一观察，再到 Prefill/Decode、显存代价与 GQA/PagedAttention，跟着一句「猫很累」的生成过程连数字一起算给你看。',
+      tags:['KV 缓存','推理优化','注意力','Transformer','显存'],
+      meta:['10 步拆解','滚动叙事','约 12 分钟']
     }
   ];
 

@@ -43,8 +43,10 @@ open index.html                  # the blog home
 python3 -m http.server 8000      # then visit http://localhost:8000/
 ```
 
-The only external dependency is Google Fonts (CDN). Everything else — styles, animation logic,
-SVG visuals — is inline. No package manager, linter, or test suite exists.
+External dependencies are kept to CDN `<link>`/`<script>` tags only — no build step, no package
+manager. Every page loads **Google Fonts**; **math-heavy posts may also load KaTeX** (see "Rendering
+math" below). Everything else — styles, animation logic, SVG visuals — is inline. No package manager,
+linter, or test suite exists.
 
 ## The house style (shared design system)
 
@@ -57,6 +59,16 @@ Every page repeats the same foundation, copied inline (there is no shared styles
   `--bg*`, and the `--serif` / `--sans` / `--mono` font vars.
 - **Typography** — Fraunces + Noto Serif SC for headings/display (serif), Noto Sans SC for body,
   IBM Plex Mono for labels, captions, and metadata. Loaded from the same Google Fonts URL.
+- **Rendering math** — do **not** hand-build formulas out of `<sub>`/`<sup>`/Unicode (`ᵀ`, `√`, `ₖ`)
+  or wrap them in mono `<code>`; that mixing is what makes a page's typography look chaotic. Posts
+  with real math load **KaTeX** (CDN css + `katex.min.js` + `auto-render.min.js`, all `defer`) and
+  write math as `\( … \)` (inline) / `\[ … \]` (display). `attention-mechanism.html` is the
+  reference: it calls `renderMathInElement(main, {delimiters, trust:true, strict:false})` from a
+  `DOMContentLoaded` handler (the `defer` scripts are ready by then), and renders the hero formula
+  explicitly with `katex.render(…, {displayMode:true, trust:true})`, color-coding parts via
+  `\htmlClass{m-q|m-k|m-v}{…}` mapped to `--accent` / `--sage` / `--accent-soft`. Keep prose Chinese
+  and tokens (猫/很/累) outside math — KaTeX has no CJK glyphs, so CJK in `\text{}`/subscripts won't
+  render; show token-subscripted expressions as their own HTML/SVG component instead.
 - **Atmosphere** — the fixed `.atmosphere` radial gradients, `.grain` noise overlay, and
   `.grid-lines` are part of the brand; carry them into new posts.
 - **Theme toggle** — a topbar button that persists choice in `localStorage` under the key
@@ -188,6 +200,24 @@ Two kinds, and new visuals should follow the same split:
   `streamOutput`.
 
 Build the static structure once; trigger motion from `runStageEffect` keyed to the stage index.
+
+### Effects must replay on every scroll-in — not once
+
+**Animations are not one-shot.** A reader who scrolls a visual out of view and back must see it
+**re-run from the start**, every time. Do **not** gate effects behind a "has it fired before?"
+flag (the old `!el.classList.contains('in')` one-time pattern). Instead:
+
+- The `IntersectionObserver` **adds** `.in` + resets + fires the effect when a stage enters view,
+  and **removes** `.in` + resets when it leaves — so both the CSS reveal and the JS effect re-arm.
+- Pair every `runStageEffect(i)` with a `resetStageEffect(i)` that restores the stage's
+  pre-animation state (clear inline styles, remove highlight classes, reset counters to their
+  static final value).
+- Make effects cancellable: track each stage's `setTimeout` / `requestAnimationFrame` handles and
+  clear them on reset, so a fast scroll never leaves a half-played animation or a stuck-invisible
+  cell. (`attention-mechanism.html` is the reference implementation: `timers`/`rafs` maps,
+  `clearStage`, `later`, `countUp`.)
+- The reset's restored state **is** the `prefers-reduced-motion` / no-JS fallback — it must show
+  the complete, correct final content on its own.
 
 ## Prose & content conventions
 

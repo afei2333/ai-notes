@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 <style>
   :root{
     --bg:#0d0e10;
@@ -282,11 +285,22 @@
   .matop{font-family:var(--serif);font-size:1.25rem;color:var(--ink-faint);font-style:italic;padding:0 0.1rem}
   .matcap{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--sage);margin-top:0.1rem}
 
-  /* worked dot-product line */
-  .dotline{font-family:var(--mono);font-size:0.92rem;color:var(--ink);text-align:center;margin-top:1.4rem;line-height:2.1;letter-spacing:0.01em}
-  .dotline .tm{color:var(--ink-faint);transition:color .4s}
-  .dotline .tm.on{color:var(--accent);font-weight:500}
-  .dotline .rs{color:var(--accent);font-weight:500;font-size:1.05em}
+  /* worked dot-product — column-by-column computation */
+  .dotviz{display:flex;flex-direction:column;align-items:center;gap:1rem;margin-top:0.5rem}
+  .dotcols{display:flex;gap:0.5rem;align-items:center}
+  .dotcol{display:flex;flex-direction:column;align-items:center;gap:0.45rem}
+  .dotcol.lead{margin-right:0.2rem}
+  .dotcol .rl{font-family:var(--mono);font-size:0.72rem;height:34px;display:grid;place-items:center;color:var(--ink-faint)}
+  .dotcol .rl.q{color:var(--accent)}
+  .dotcol .rl.k{color:var(--sage)}
+  .dvcell{width:42px;height:34px;display:grid;place-items:center;font-family:var(--mono);font-size:0.82rem;color:var(--ink);background:var(--chip-bg);border:1px solid var(--line);border-radius:6px;transition:background .4s,border-color .4s,color .4s,transform .4s}
+  .dvcell.q.on{background:rgba(200,100,60,0.2);border-color:var(--accent);color:var(--accent-soft);transform:translateY(-2px)}
+  .dvcell.k.on{background:rgba(127,145,131,0.2);border-color:var(--sage);color:var(--sage);transform:translateY(-2px)}
+  .dvprod{font-family:var(--mono);font-size:0.78rem;color:var(--accent);height:1.4em;opacity:0;transform:translateY(-5px);transition:opacity .35s,transform .35s}
+  .dvprod.on{opacity:1;transform:none}
+  .dottotal{font-family:var(--mono);font-size:0.92rem;color:var(--ink-dim);opacity:0;transition:opacity .5s}
+  .dottotal.on{opacity:1}
+  .dottotal b{color:var(--accent);font-weight:500;font-size:1.2em;margin-left:0.2em}
 
   /* weighted-sum mixing */
   .mix{display:flex;flex-direction:column;gap:0.55rem;font-family:var(--mono);font-size:0.82rem;align-items:center}
@@ -319,14 +333,18 @@
   .head .hg i{width:11px;height:11px;border-radius:2px;background:var(--line-strong)}
   .head .hl-name{font-family:var(--mono);font-size:0.56rem;letter-spacing:0.04em;color:var(--ink-faint)}
 
-  /* final formula */
-  .formula{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:0.3rem;font-family:var(--serif);font-size:clamp(1.3rem,3.6vw,1.9rem);color:var(--ink);line-height:1.5;text-align:center}
-  .formula .fp{padding:0.1em 0.28em;border-radius:0.35em;transition:all .4s}
-  .formula .fp.q{color:var(--accent)}
-  .formula .fp.k{color:var(--sage)}
-  .formula .fp.v{color:var(--accent-soft)}
-  .formula .fp.sm{color:var(--ink-dim);font-style:italic}
-  .fkey{display:flex;flex-wrap:wrap;gap:0.5rem 1rem;justify-content:center;margin-top:1.5rem;font-family:var(--mono);font-size:0.68rem;color:var(--ink-dim)}
+  /* ── KaTeX math — one consistent typeface for every formula ── */
+  .katex{font-size:1.04em}
+  .desc .katex,.note .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  /* the display formula + its assemble animation */
+  .formula-display{display:flex;justify-content:center;padding:0.6rem 0 0.2rem;font-size:clamp(1rem,2.6vw,1.45rem);color:var(--ink)}
+  .formula-display .katex-display{margin:0}
+  .formula-display .katex-display>.katex{white-space:normal}
+  #attnFormula .a-op,#attnFormula .a-frac,#attnFormula .a-out{transition:opacity .55s ease,transform .45s ease}
+  .fkey{display:flex;flex-wrap:wrap;gap:0.5rem 1rem;justify-content:center;margin-top:1.6rem;font-family:var(--mono);font-size:0.68rem;color:var(--ink-dim)}
   .fkey span i{font-style:normal;font-weight:600;margin-right:0.4rem}
   .fkey .q i{color:var(--accent)}.fkey .k i{color:var(--sage)}.fkey .v i{color:var(--accent-soft)}
 
@@ -365,7 +383,7 @@
   @keyframes draw{from{stroke-dashoffset:var(--len)}to{stroke-dashoffset:0}}
   @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
   @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
-  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.mixrow,.mixres{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.mixrow,.mixres,.dvprod,.dottotal{opacity:1!important;transform:none!important}.attn .c{color:var(--ink)!important}}
 </style>
 </head>
 <body>
@@ -399,7 +417,7 @@
         <span class="l">注意力，</span>
         <span class="l"><em>逐矩阵</em>拆开。</span>
       </h1>
-      <p class="sub"><code>softmax(QKᵀ/√dₖ)·V</code> —— 这条被反复背诵的公式，到底在算什么？我们用一句三个字的话「<b>猫 很 累</b>」，把每一个矩阵乘法、连同每一个数字，一步一步算给你看。</p>
+      <p class="sub"><span class="mathx">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\)</span> —— 这条被反复背诵的公式，到底在算什么？我们用一句三个字的话「<b>猫 很 累</b>」，把每一个矩阵乘法、连同每一个数字，一步一步算给你看。</p>
       <div class="meta">
         <div><b>1</b>条核心公式</div>
         <div><b>3</b>个词的例子</div>
@@ -443,11 +461,11 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">Input Matrix</span><span class="stage-phase">准备</span></div>
         <h2 class="reveal d1">一句话，变成一个矩阵</h2>
-        <p class="desc reveal d1">每个词先被嵌入成一个向量（这里取维度 <code>d=4</code>，真实模型里是几百上千维），再加上位置信息。三个词堆叠起来，就是输入矩阵 <b>X ∈ ℝ³ˣ⁴</b>——三行（每行一个词）、四列（每列一个特征）。</p>
+        <p class="desc reveal d1">每个词先被嵌入成一个向量（这里取维度 \(d=4\)，真实模型里是几百上千维），再加上位置信息。三个词堆叠起来，就是输入矩阵 \(X \in \mathbb{R}^{3\times 4}\)——三行（每行一个词）、四列（每列一个特征）。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">输入 / X = 词向量堆叠</div>
           <div class="matblock" id="xMat"></div>
-          <div class="note">下面所有运算，都从这张 <b>3×4</b> 的表开始。数字是为了好算而特意挑的，但<b>运算规则与真实模型一模一样</b>。</div>
+          <div class="note">下面所有运算，都从这张 \(3\times 4\) 的表开始。数字是为了好算而特意挑的，但<b>运算规则与真实模型一模一样</b>。</div>
         </div>
       </article>
 
@@ -456,7 +474,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">Q · K · V</span><span class="stage-phase key">投影</span></div>
         <h2 class="reveal d1">三把钥匙：Query、Key、Value</h2>
-        <p class="desc reveal d1">注意力不直接用 X，而是先把它<b>投影成三份</b>。X 分别乘上三个<b>可学习</b>的权重矩阵 <code>W_Q、W_K、W_V</code>，得到 <b>Q（查询）、K（键）、V（值）</b>。这三个权重，正是预训练学到的东西。</p>
+        <p class="desc reveal d1">注意力不直接用 X，而是先把它<b>投影成三份</b>。X 分别乘上三个<b>可学习</b>的权重矩阵 \(W_Q\)、\(W_K\)、\(W_V\)，得到 <b>Q（查询）、K（键）、V（值）</b>。这三个权重，正是预训练学到的东西。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">三种角色 / The three roles</div>
           <div class="learns">
@@ -477,29 +495,29 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Scores = QKᵀ</span><span class="stage-phase key">打分</span></div>
         <h2 class="reveal d1">打分：Query 与 Key 做点积</h2>
-        <p class="desc reveal d1">每个词的查询牌 <b>q</b>，去和<b>每一个</b>词的标识牌 <b>k</b> 做<b>点积</b>。点积越大，说明两者越「对得上」。所有点积排成一张 <b>n×n</b> 的分数表 <code>S = QKᵀ</code>：第 i 行第 j 列，就是「词 i 该多关注词 j」。</p>
+        <p class="desc reveal d1">每个词的查询牌 <b>q</b>，去和<b>每一个</b>词的标识牌 <b>k</b> 做<b>点积</b>。点积越大，说明两者越「对得上」。所有点积排成一张 \(n\times n\) 的分数表 \(S = QK^\top\)：第 \(i\) 行第 \(j\) 列，就是「词 \(i\) 该多关注词 \(j\)」。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">手算 / 「累」看「猫」的分数 = q累 · k猫</div>
-          <div class="dotline" id="dotLine"></div>
+          <div class="dotviz" id="dotViz"></div>
           <div class="note">点积就是<b>对应位置相乘再相加</b>。3 这个分数，来自 q累 与 k猫 在第 1、第 3 维上的「共振」。</div>
         </div>
         <div class="viz reveal d3">
           <div class="viz-cap">完整分数矩阵 / S = QKᵀ（3×3）</div>
           <div class="matblock" id="scoreMat"></div>
-          <div class="note">高亮的「累」这一行 <code>[3, 0, 2]</code>：它最想看「猫」(3)，其次看自己(2)，几乎不理「很」(0)。但这还是<b>原始分数</b>，又大又不规整——下一步先把它驯服。</div>
+          <div class="note">高亮的「累」这一行 \([3,\,0,\,2]\)：它最想看「猫」(3)，其次看自己(2)，几乎不理「很」(0)。但这还是<b>原始分数</b>，又大又不规整——下一步先把它驯服。</div>
         </div>
       </article>
 
       <!-- 05 · 缩放 -->
       <article class="stage" data-phase="稳定">
         <span class="node"></span>
-        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">Scale ÷√dₖ</span><span class="stage-phase">稳定</span></div>
-        <h2 class="reveal d1">缩放：除以 √dₖ</h2>
-        <p class="desc reveal d1">维度越高，点积的数值就越容易变得很大；而过大的分数会把下一步的 softmax 推进<b>饱和区</b>，那里梯度几乎为零、模型学不动。所以先统一除以 <code>√dₖ</code> 把方差拉回 ~1。这里 <code>dₖ=4</code>，于是除以 <b>2</b>。</p>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">Scaling</span><span class="stage-phase">稳定</span></div>
+        <h2 class="reveal d1">缩放：除以 \(\sqrt{d_k}\)</h2>
+        <p class="desc reveal d1">维度越高，点积的数值就越容易变得很大；而过大的分数会把下一步的 softmax 推进<b>饱和区</b>，那里梯度几乎为零、模型学不动。所以先统一除以 \(\sqrt{d_k}\) 把方差拉回 ~1。这里 \(d_k=4\)，于是除以 <b>2</b>。</p>
         <div class="viz reveal d2">
-          <div class="viz-cap">缩放「累」这一行 / S累 ÷ √4</div>
+          <div class="viz-cap">缩放「累」这一行 / S累 ÷ 2</div>
           <div class="matblock" id="scaleMat"></div>
-          <div class="note"><code>[3, 0, 2] ÷ 2 = [1.5, 0, 1.0]</code>。数值变温和了，但<b>相对大小不变</b>——「猫」依然领先。缩放只稳定数值，不改变偏好。</div>
+          <div class="note">\([3,\,0,\,2] \div 2 = [1.5,\,0,\,1.0]\)。数值变温和了，但<b>相对大小不变</b>——「猫」依然领先。缩放只稳定数值，不改变偏好。</div>
         </div>
       </article>
 
@@ -508,7 +526,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">Softmax</span><span class="stage-phase key">归一</span></div>
         <h2 class="reveal d1">Softmax：把分数变成权重</h2>
-        <p class="desc reveal d1">对每一行做 <b>softmax</b>：先取 <code>eˣ</code> 放大差距，再除以总和归一。出来的一行数字<b>非负、且加起来正好等于 1</b>——这就是注意力权重 <b>α</b>。「累」这一行，终于变成了一个干净的概率分布。</p>
+        <p class="desc reveal d1">对每一行做 <b>softmax</b>：先取 \(e^x\) 放大差距，再除以总和归一。出来的一行数字<b>非负、且加起来正好等于 1</b>——这就是注意力权重 \(\alpha\)。「累」这一行，终于变成了一个干净的概率分布。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">softmax([1.5, 0, 1.0]) → 权重 α</div>
           <div class="probs">
@@ -516,7 +534,7 @@
             <div class="prob"><span class="t">→ 很</span><span class="bar"><i style="--w:12%"></i></span><span class="pct">0.12</span></div>
             <div class="prob"><span class="t">→ 累</span><span class="bar"><i style="--w:33%"></i></span><span class="pct">0.33</span></div>
           </div>
-          <div class="note"><code>e¹·⁵=4.48, e⁰=1, e¹·⁰=2.72</code>，三者之和 8.20。各自一除：<b>0.55 / 0.12 / 0.33</b>——正是第 1 站那三个数字的来历。</div>
+          <div class="note">\(e^{1.5}=4.48,\quad e^{0}=1,\quad e^{1.0}=2.72\)，三者之和 8.20。各自一除：<b>0.55 / 0.12 / 0.33</b>——正是第 1 站那三个数字的来历。</div>
         </div>
       </article>
 
@@ -525,7 +543,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Weighted Sum · αV</span><span class="stage-phase key">输出</span></div>
         <h2 class="reveal d1">加权求和：按权重取出 Value</h2>
-        <p class="desc reveal d1">最后一步，也是<b>收获的一步</b>：拿刚算出的权重 α，去给每个词的<b>值向量 V 加权求和</b>。<code>o累 = 0.55·v猫 + 0.12·v很 + 0.33·v累</code>。「累」的新向量，从此<b>装进了整句话的信息</b>。</p>
+        <p class="desc reveal d1">最后一步，也是<b>收获的一步</b>：拿刚算出的权重 \(\alpha\)，去给每个词的<b>值向量 V 加权求和</b>——把 <b>0.55</b> 份「猫」、<b>0.12</b> 份「很」、<b>0.33</b> 份「累」的值向量叠在一起。「累」的新向量，从此<b>装进了整句话的信息</b>。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">混合 / o累 = Σ αᵢ·vᵢ</div>
           <div class="mix" id="mixWork"></div>
@@ -543,7 +561,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">Causal Mask</span><span class="stage-phase">约束</span></div>
         <h2 class="reveal d1">因果遮罩：不许偷看未来</h2>
-        <p class="desc reveal d1">上面是<b>双向</b>注意力。但用来<b>生成文字</b>的语言模型有一条铁律：预测某个词时，不能看见它<b>后面</b>的词。做法很巧妙——在 softmax <b>之前</b>，把分数矩阵的<b>上三角</b>全部设成 <code>−∞</code>。这样 eˣ 后它们都趋近于 0，未来位置自然分不到任何权重。</p>
+        <p class="desc reveal d1">上面是<b>双向</b>注意力。但用来<b>生成文字</b>的语言模型有一条铁律：预测某个词时，不能看见它<b>后面</b>的词。做法很巧妙——在 softmax <b>之前</b>，把分数矩阵的<b>上三角</b>全部设成 \(-\infty\)。这样取 \(e^x\) 后它们都趋近于 0，未来位置自然分不到任何权重。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">遮罩后的分数 / 上三角 = −∞</div>
           <div class="matblock" id="maskMat"></div>
@@ -556,7 +574,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Multi-Head</span><span class="stage-phase key">扩展</span></div>
         <h2 class="reveal d1">多头：并行的多重视角</h2>
-        <p class="desc reveal d1">一次注意力只能捕捉<b>一种</b>关系。于是干脆<b>并行跑多个</b>——每个「头」有自己独立的 W_Q/K/V，各自投影到 <code>dₖ = d/h</code> 维。不同的头会自发分工：有的盯<b>语法</b>，有的追<b>指代</b>，有的看<b>位置</b>。算完把所有头<b>拼接</b>起来，再过一个输出投影 <code>W_O</code>。</p>
+        <p class="desc reveal d1">一次注意力只能捕捉<b>一种</b>关系。于是干脆<b>并行跑多个</b>——每个「头」有自己独立的 \(W_Q\)、\(W_K\)、\(W_V\)，各自投影到 \(d_k = d/h\) 维。不同的头会自发分工：有的盯<b>语法</b>，有的追<b>指代</b>，有的看<b>位置</b>。算完把所有头<b>拼接</b>起来，再过一个输出投影 \(W_O\)。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">一个典型配置 / Typical config</div>
           <div class="facts">
@@ -580,18 +598,13 @@
         <h2 class="reveal d1">公式，归位</h2>
         <p class="desc reveal d1">现在再看这条公式，每一个符号你都<b>亲手算过它的数字</b>了：</p>
         <div class="viz reveal d2">
-          <div class="viz-cap">Attention(Q, K, V)</div>
-          <div class="formula">
-            <span class="fp sm">softmax</span><span>(</span>
-            <span class="fp q">Q</span><span class="fp k">Kᵀ</span>
-            <span>/</span><span>√dₖ</span><span>)</span>
-            <span class="fp v">V</span>
-          </div>
+          <div class="viz-cap">缩放点积注意力 / Scaled Dot-Product Attention</div>
+          <div class="formula-display" id="attnFormula"></div>
           <div class="fkey">
-            <span class="q"><i>QKᵀ</i>打分：谁该看谁</span>
-            <span class="sm"><i>√dₖ</i>缩放：稳住数值</span>
-            <span class="k"><i>softmax</i>归一：变成权重</span>
-            <span class="v"><i>·V</i>求和：取出信息</span>
+            <span class="q"><i>\(QK^\top\)</i>打分：谁该看谁</span>
+            <span class="sm"><i>\(\sqrt{d_k}\)</i>缩放：稳住数值</span>
+            <span class="k"><i>\(\operatorname{softmax}\)</i>归一：变成权重</span>
+            <span class="v"><i>\(\cdot\,V\)</i>求和：取出信息</span>
           </div>
         </div>
         <div class="viz reveal d3">
@@ -610,7 +623,7 @@
     <!-- FINALE -->
     <section class="finale" id="finale">
       <div class="mark">End of Walkthrough</div>
-      <h3>从「猫很累」到 <span class="fcode">softmax(QKᵀ/√dₖ)·V</span>——现在，每个符号你都见过它的数字了。</h3>
+      <h3>从「猫很累」到 <span class="mathx">\(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\)</span> ——现在，每个符号你都见过它的数字了。</h3>
       <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
       <button class="replay" id="replayBtn">↺ 再拆一遍</button>
     </section>
@@ -656,12 +669,21 @@
     railBtns.forEach((b,i)=>{ b.classList.toggle('active', i===current); b.classList.toggle('done', i<current); });
   }
 
-  // scroll-driven reveal: add .in + fire one-time effect as each stage enters view
+  // scroll-driven reveal: replay effects EVERY time a stage enters view,
+  // and reset them when it leaves — so the animation refreshes on each pass,
+  // never just the first time.
   const revealObserver = new IntersectionObserver((entries)=>{
     entries.forEach(e=>{
-      if(e.isIntersecting && !e.target.classList.contains('in')){
-        e.target.classList.add('in');
-        runStageEffect(stages.indexOf(e.target));
+      const idx = stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){
+          e.target.classList.add('in');
+          resetStageEffect(idx);   // clear any leftover state
+          runStageEffect(idx);     // fire fresh
+        }
+      } else if(e.target.classList.contains('in')){
+        e.target.classList.remove('in');  // re-arm the CSS reveal
+        resetStageEffect(idx);            // re-arm the JS effect
       }
     });
   }, {threshold:0, rootMargin:'0px 0px -20% 0px'});
@@ -704,11 +726,8 @@
 
   replayBtn.addEventListener('click',()=>{
     stopAuto();
-    stages.forEach(s=>s.classList.remove('in'));
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
     finale.classList.remove('show');
-    document.querySelectorAll('.mixrow,.mixres').forEach(el=>el.classList.remove('on'));
-    document.querySelectorAll('.mcell.hl,.mcell.hl2').forEach(el=>el.classList.remove('hl','hl2'));
-    document.querySelectorAll('#attnMap .c').forEach(c=>{c.style.background='';c.classList.remove('lit');});
     current=-1; updateProgress();
     window.scrollTo({top:0,behavior:'smooth'});
   });
@@ -750,19 +769,31 @@
     const v=makeMatrix(V,{name:'V',dim:'3×3',rowLabels:toks});matcap(v,'Value');
     host.append(q,k,v);
   })();
-  // 04 · dot line + score matrix
+  // 04 · column-by-column dot product + score matrix
   (function(){
-    const dl=document.getElementById('dotLine');
-    dl.innerHTML='q<sub>累</sub>·k<sub>猫</sub> &nbsp;=&nbsp; '+
-      '<span class="tm">1·1</span> + <span class="tm">0·0</span> + <span class="tm">2·1</span> + <span class="tm">0·0</span>'+
-      ' &nbsp;=&nbsp; <span class="rs">3</span>';
+    const host=document.getElementById('dotViz');
+    const qv=Q[2], kv=K[0];                       // q累 = [1,0,2,0], k猫 = [1,0,1,0]
+    const prods=qv.map((q,c)=>q*kv[c]);           // [1,0,2,0]
+    const cols=document.createElement('div');cols.className='dotcols';
+    const lead=document.createElement('div');lead.className='dotcol lead';
+    lead.innerHTML='<div class="rl q">q<sub>累</sub></div><div class="rl k">k<sub>猫</sub></div><div class="rl">乘积</div>';
+    cols.appendChild(lead);
+    qv.forEach((q,c)=>{
+      const col=document.createElement('div');col.className='dotcol';col.dataset.c=c;
+      col.innerHTML=`<div class="dvcell q">${q}</div><div class="dvcell k">${kv[c]}</div><div class="dvprod">${prods[c]}</div>`;
+      cols.appendChild(col);
+    });
+    host.appendChild(cols);
+    const total=document.createElement('div');total.className='dottotal';
+    total.innerHTML=`q<sub>累</sub> · k<sub>猫</sub> = 1 + 0 + 2 + 0 = <b>3</b>`;
+    host.appendChild(total);
     document.getElementById('scoreMat').appendChild(makeMatrix(S,{name:'S = QKᵀ',dim:'3×3',rowLabels:toks}));
   })();
   // 05 · scale (just 累 row, before → after)
   (function(){
     const host=document.getElementById('scaleMat');
     const before=makeMatrix([[3,0,2]],{name:'S累',dim:'原始'});
-    const after=makeMatrix([['1.5','0','1.0']],{name:'÷ √4',dim:'缩放后'});
+    const after=makeMatrix([['1.5','0','1.0']],{name:'÷ 2',dim:'缩放后'});
     host.append(before, op('→'), after);
   })();
   // 07 · weighted-sum mixing + heatmap
@@ -823,47 +854,195 @@
     });
   })();
 
-  // ── per-stage timed effects (index = position, 0-based) ──
+  // ── per-stage animation engine ───────────────────────────────
+  // Every effect is replayable: timers + rAFs are tracked per stage so a
+  // reset can cancel anything still in flight before the next pass fires.
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){
+    (timers[i]||[]).forEach(clearTimeout); timers[i]=[];
+    (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[];
+  }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+  function countUp(i,el,target,{dur=900,dec=2,suffix=''}={}){
+    const start=performance.now();
+    const step=now=>{
+      const t=Math.min(1,(now-start)/dur), e=1-Math.pow(1-t,3);
+      el.textContent=(target*e).toFixed(dec)+suffix;
+      if(t<1)(rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+    };
+    (rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+  }
+  // gentle whole-element fade-in
+  function fadeIn(i,el,delay,dy=12){
+    el.style.opacity='0'; el.style.transform=`translateY(${dy}px)`;
+    later(i,()=>{ el.style.transition='opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)'; el.style.opacity=''; el.style.transform=''; }, delay);
+  }
+  // sweep a brief highlight down a matrix, row by row
+  function scanRows(i,matrix,base=350,hold=460){
+    if(!matrix) return;
+    matrix.querySelectorAll('.mrow').forEach((r,ri)=>{
+      const cells=r.querySelectorAll('.mcell');
+      later(i,()=>cells.forEach(c=>c.classList.add('hl')), base+ri*hold);
+      later(i,()=>cells.forEach(c=>c.classList.remove('hl')), base+ri*hold+hold*0.6);
+    });
+  }
+
   function runStageEffect(i){
-    if(i===3) animateDot();
-    if(i===6){ animateMix(); fillAttn(); }
-    if(i===7) animateMask();
-    if(i===8) animateHeads();
+    if(reduceMotion) return;          // static fallback already shows everything
+    if(i===1) animateInput(i);
+    if(i===2) animateQKV(i);
+    if(i===3) animateDot(i);
+    if(i===4) animateScale(i);
+    if(i===5) animateSoftmax(i);
+    if(i===6){ animateMix(i); fillAttn(i); }
+    if(i===7) animateMask(i);
+    if(i===8) animateHeads(i);
+    if(i===9) animateFormula(i);
   }
-  function animateDot(){
-    const terms=document.querySelectorAll('#dotLine .tm');
-    const score=document.querySelector('#scoreMat .mcell[data-r="2"][data-c="0"]');
-    terms.forEach((t,k)=>setTimeout(()=>t.classList.add('on'), 500+k*420));
-    // highlight 累-row of the score matrix
+
+  // 02 · the input matrix fades in, then a highlight sweeps down its rows
+  function animateInput(i){
+    const m=document.querySelector('#xMat .matrix');
+    fadeIn(i,m,120);
+    scanRows(i,m,900,520);
+  }
+
+  // 03 · project X into Q / K / V — fade each block in turn, then trace its rows
+  function animateQKV(i){
+    document.querySelectorAll('#qkvMat .matunit').forEach((u,mi)=>{
+      fadeIn(i,u,200+mi*440,14);
+      scanRows(i,u.querySelector('.matrix'),200+mi*440+760,340);
+    });
+  }
+
+  // 04 · dot product, one column at a time — each q·k product appears, then the sum
+  function animateDot(i){
+    const cols=document.querySelectorAll('#dotViz .dotcol:not(.lead)');
+    const total=document.querySelector('#dotViz .dottotal');
+    cols.forEach((col,k)=>{
+      later(i,()=>col.querySelectorAll('.dvcell').forEach(c=>c.classList.add('on')), 450+k*560);
+      later(i,()=>col.querySelector('.dvprod').classList.add('on'), 450+k*560+280);
+    });
+    if(total) later(i,()=>total.classList.add('on'), 450+cols.length*560+250);
     const row=document.querySelectorAll('#scoreMat .mcell[data-r="2"]');
-    setTimeout(()=>row.forEach((c,k)=>setTimeout(()=>c.classList.add('hl'),k*180)), 700);
+    later(i,()=>row.forEach((c,k)=>later(i,()=>c.classList.add('hl'),k*170)), 600);
   }
-  function animateMix(){
+
+  // 05 · divide by √dₖ — highlight the raw row, then the scaled row resolves in
+  function animateScale(i){
+    const mats=document.querySelectorAll('#scaleMat .matrix');
+    if(mats.length<2) return;
+    const before=mats[0].querySelectorAll('.mcell');
+    const after=mats[1].querySelectorAll('.mcell');
+    after.forEach(c=>{c.style.opacity='0.12';});
+    later(i,()=>before.forEach(c=>c.classList.add('hl')), 350);
+    later(i,()=>before.forEach(c=>c.classList.remove('hl')), 1250);
+    after.forEach((c,k)=>later(i,()=>{
+      c.style.transition='opacity .5s ease'; c.style.opacity='';
+      c.classList.add('hl2'); later(i,()=>c.classList.remove('hl2'), 720);
+    }, 1000+k*220));
+  }
+
+  // 06 · softmax — count the weights up from zero as the bars fill
+  function animateSoftmax(i){
+    const vals=[0.55,0.12,0.33];
+    stages[5].querySelectorAll('.prob').forEach((p,k)=>{
+      const pct=p.querySelector('.pct'); pct.textContent='0.00';
+      later(i,()=>countUp(i,pct,vals[k],{dur:950,dec:2}), 350+k*160);
+    });
+  }
+
+  // 07 · the weighted sum, line by line, then the attention heatmap lights up
+  function animateMix(i){
     const rows=document.querySelectorAll('#mixWork .mixrow');
-    rows.forEach((r,k)=>setTimeout(()=>r.classList.add('on'), 300+k*500));
+    rows.forEach((r,k)=>later(i,()=>r.classList.add('on'), 300+k*460));
     const res=document.querySelector('#mixWork .mixres');
-    if(res) setTimeout(()=>res.classList.add('on'), 300+rows.length*500+200);
+    if(res) later(i,()=>res.classList.add('on'), 300+rows.length*460+220);
   }
-  function fillAttn(){
-    const cells=document.querySelectorAll('#attnGrid .c');
-    cells.forEach(c=>{
+  function fillAttn(i){
+    document.querySelectorAll('#attnGrid .c').forEach(c=>{
       const v=A[+c.dataset.r][+c.dataset.c];
-      setTimeout(()=>{
+      later(i,()=>{
+        c.style.transition='background .5s ease,color .5s ease';
         c.style.background=`rgba(200,100,60,${(0.1+v*0.85).toFixed(2)})`;
         if(v>=0.3) c.classList.add('lit');
-      }, 200 + (+c.dataset.r*3 + +c.dataset.c)*70);
+      }, 300 + (+c.dataset.r*3 + +c.dataset.c)*90);
     });
   }
-  function animateMask(){
-    const cells=document.querySelectorAll('#maskMat .mcell.masked');
-    cells.forEach((c,k)=>{ c.style.opacity='1'; setTimeout(()=>{c.style.opacity='0.45';}, 200+k*160); });
-  }
-  function animateHeads(){
-    document.querySelectorAll('#headsGrid .hg i').forEach((cell,k)=>{
-      const v=parseFloat(cell.dataset.v);
-      setTimeout(()=>{ cell.style.background=`rgba(200,100,60,${(0.08+v*0.8).toFixed(2)})`; }, k*16);
+
+  // 08 · causal mask — the upper triangle fades to −∞ one cell at a time
+  function animateMask(i){
+    document.querySelectorAll('#maskMat .mcell.masked').forEach((c,k)=>{
+      c.style.opacity='0';
+      later(i,()=>{ c.style.transition='opacity .5s ease'; c.style.opacity='0.55'; }, 300+k*200);
     });
   }
+
+  // 09 · multi-head — each head's grid heats up, staggered head by head
+  function animateHeads(i){
+    document.querySelectorAll('#headsGrid .head').forEach((head,hi)=>{
+      head.querySelectorAll('.hg i').forEach(cell=>{
+        const v=parseFloat(cell.dataset.v);
+        later(i,()=>{ cell.style.transition='background .45s ease'; cell.style.background=`rgba(200,100,60,${(0.08+v*0.8).toFixed(2)})`; }, 200+hi*130);
+      });
+    });
+  }
+
+  // 10 · the formula assembles — softmax, then the fraction, then ·V slide in
+  function animateFormula(i){
+    const parts=document.querySelectorAll('#attnFormula .a-op, #attnFormula .a-frac, #attnFormula .a-out');
+    if(!parts.length) return;
+    parts.forEach(p=>{p.style.opacity='0';p.style.transform='translateY(7px)';});
+    parts.forEach((p,k)=>later(i,()=>{ p.style.opacity='1'; p.style.transform='none'; }, 400+k*440));
+  }
+
+  // ── reset a stage back to its pre-animation state ─────────────
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===1){ const m=document.querySelector('#xMat .matrix'); if(m)m.style.cssText=''; document.querySelectorAll('#xMat .mcell').forEach(c=>c.classList.remove('hl')); }
+    if(i===2){ document.querySelectorAll('#qkvMat .matunit').forEach(u=>u.style.cssText=''); document.querySelectorAll('#qkvMat .mcell').forEach(c=>c.classList.remove('hl')); }
+    if(i===3){
+      document.querySelectorAll('#dotViz .dvcell').forEach(c=>c.classList.remove('on'));
+      document.querySelectorAll('#dotViz .dvprod').forEach(c=>c.classList.remove('on'));
+      const total=document.querySelector('#dotViz .dottotal'); if(total) total.classList.remove('on');
+      document.querySelectorAll('#scoreMat .mcell').forEach(c=>c.classList.remove('hl'));
+    }
+    if(i===4) document.querySelectorAll('#scaleMat .mcell').forEach(c=>{c.style.cssText='';c.classList.remove('hl','hl2');});
+    if(i===5){ const vals=[0.55,0.12,0.33]; stages[5].querySelectorAll('.prob').forEach((p,k)=>{p.querySelector('.pct').textContent=vals[k].toFixed(2);}); }
+    if(i===6){
+      document.querySelectorAll('#mixWork .mixrow,#mixWork .mixres').forEach(el=>el.classList.remove('on'));
+      document.querySelectorAll('#attnGrid .c').forEach(c=>{c.style.background='';c.classList.remove('lit');});
+    }
+    if(i===7) document.querySelectorAll('#maskMat .mcell.masked').forEach(c=>{c.style.cssText='';});
+    if(i===8) document.querySelectorAll('#headsGrid .hg i').forEach(c=>{c.style.background='';});
+    if(i===9) document.querySelectorAll('#attnFormula .a-op,#attnFormula .a-frac,#attnFormula .a-out').forEach(p=>{p.style.cssText='';});
+  }
+
+  // ── render every formula with KaTeX (loaded via deferred CDN scripts) ──
+  function renderFormula(){
+    const el=document.getElementById('attnFormula');
+    if(!el || !window.katex) return;
+    katex.render(
+      "\\operatorname{Attention}(\\htmlClass{m-q}{Q},\\htmlClass{m-k}{K},\\htmlClass{m-v}{V})="+
+      "\\htmlClass{a-op}{\\operatorname{softmax}}\\!\\left(\\htmlClass{a-frac}{\\dfrac{\\htmlClass{m-q}{Q}\\,\\htmlClass{m-k}{K^{\\top}}}{\\sqrt{d_k}}}\\right)"+
+      "\\htmlClass{a-out m-v}{V}",
+      el, {displayMode:true, throwOnError:false, trust:true, strict:false}
+    );
+  }
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{
+        renderMathInElement(document.querySelector('main'), {
+          delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+          throwOnError:false, trust:true, strict:false
+        });
+      }catch(e){}
+    }
+    renderFormula();
+  }
+  if(window.katex && window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded', renderAllMath);
 
   updateProgress();
 })();

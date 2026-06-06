@@ -24,3 +24,6 @@ tmp/
 # Local dev server artifacts
 .python-version
 __pycache__/
+
+# Claude Code per-project agent memory (machine-specific, not for the repo)
+.claude/projects/

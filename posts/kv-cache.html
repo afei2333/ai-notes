@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KV 缓存，逐步拆开 · 原理手记</title>
+<meta name="description" content="LLM 逐字蹦出答案还能这么快，靠的是 KV 缓存——把「每一步重算整段历史」省成「每步只算一个新词」。跟着一句「猫很累」的生成过程，连数字一起算给你看。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .progress-wrap{display:flex;align-items:center;gap:0.9rem}
+  .progress-num{font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.1em}
+  .progress-num b{color:var(--accent);font-weight:500}
+  .progress-track{width:clamp(60px,12vw,140px);height:1px;background:var(--line-strong);position:relative}
+  .progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .9s cubic-bezier(.16,1,.3,1)}
+
+  /* ── side rail ───────────────────────────────────────────── */
+  .rail{position:fixed;left:clamp(1rem,2.5vw,2rem);top:50%;transform:translateY(-50%);z-index:40;display:flex;flex-direction:column;gap:0.85rem;opacity:0;transition:opacity .6s}
+  .rail.show{opacity:1}
+  .rail button{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:0.6rem;font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);letter-spacing:0.08em;transition:color .4s;padding:0}
+  .rail .dot{width:6px;height:6px;border-radius:50%;border:1px solid var(--ink-faint);transition:all .4s;flex:none}
+  .rail button .lbl{opacity:0;transform:translateX(-4px);transition:all .4s;white-space:nowrap}
+  .rail button:hover .lbl{opacity:1;transform:none}
+  .rail button.active{color:var(--accent)}
+  .rail button.active .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 4px rgba(200,100,60,0.12)}
+  .rail button.done .dot{border-color:var(--ink-dim);background:var(--ink-dim)}
+  @media(max-width:1024px){.rail{display:none}}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1040px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.04;letter-spacing:-0.01em;font-size:clamp(2.8rem,8vw,6.2rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:48ch;margin-top:2.4rem;color:var(--ink);font-size:1.2rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub .katex{color:var(--accent-soft)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:3.2rem;opacity:0;animation:rise 1s .65s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0}
+  .start-btn{margin-top:3.6rem;align-self:flex-start;cursor:pointer;background:none;border:1px solid var(--line-strong);color:var(--ink);font-family:var(--mono);font-size:0.78rem;letter-spacing:0.18em;text-transform:uppercase;padding:1.05rem 2.2rem;border-radius:2rem;display:flex;align-items:center;gap:0.9rem;transition:all .5s cubic-bezier(.16,1,.3,1);opacity:0;animation:rise 1s .8s forwards}
+  .start-btn:hover{border-color:var(--accent);color:var(--accent);gap:1.4rem;padding-right:2.6rem}
+  .start-btn .arc{width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center;font-size:0.8rem;transition:transform .5s}
+  .start-btn:hover .arc{transform:rotate(90deg)}
+
+  /* ── flow / stages ───────────────────────────────────────── */
+  .flow{position:relative;padding-bottom:6rem}
+  .spine{position:absolute;left:clamp(14px,3.5vw,38px);top:0;bottom:0;width:1px;background:var(--line)}
+  .spine .lit{position:absolute;inset:0 auto auto 0;width:1px;height:0;background:linear-gradient(var(--accent),var(--sage));transition:height 1s cubic-bezier(.16,1,.3,1)}
+  @media(max-width:680px){.spine{display:none}}
+  .stage{position:relative;padding:clamp(2.5rem,6vw,5rem) 0 clamp(2.5rem,6vw,5rem) clamp(48px,9vw,110px);border-bottom:1px solid var(--line);scroll-margin-top:78px}
+  @media(max-width:680px){.stage{padding-left:0}}
+  .stage[hidden]{display:none}
+  .stage.in .reveal{opacity:1;transform:none}
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.12s}.reveal.d2{transition-delay:.24s}.reveal.d3{transition-delay:.36s}.reveal.d4{transition-delay:.48s}
+  .stage .node{position:absolute;left:clamp(8px,3.5vw,32px);top:clamp(2.7rem,6vw,5.2rem);width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-faint);transition:all .6s}
+  .stage.in .node{border-color:var(--accent);box-shadow:0 0 0 5px rgba(200,100,60,0.1)}
+  .stage.in .node::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+  @media(max-width:680px){.stage .node{display:none}}
+  .stage-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .stage-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .stage-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .stage-phase{margin-left:auto;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--ink-faint);border:1px solid var(--line);padding:0.3rem 0.7rem;border-radius:1rem}
+  .stage-phase.key{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .stage h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.8rem,4.4vw,3rem);line-height:1.1;letter-spacing:-0.01em}
+  .stage .desc{max-width:54ch;margin-top:1.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.95}
+  .stage .desc b{color:var(--accent-soft);font-weight:500}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.4rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.2rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* ── KaTeX math — one consistent typeface for every formula ── */
+  .katex{font-size:1.04em}
+  .desc .katex,.note .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  .mathrow{display:flex;justify-content:center;padding:0.4rem 0;font-size:clamp(0.95rem,2.4vw,1.25rem);overflow-x:auto}
+  .mathrow .katex-display{margin:0}
+
+  /* ── component library ───────────────────────────────────── */
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .chip{font-family:var(--mono);font-size:0.74rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);transition:all .4s}
+  .probs{display:flex;flex-direction:column;gap:0.55rem;margin-top:0.4rem}
+  .prob{display:flex;align-items:center;gap:0.9rem}
+  .prob .t{font-family:var(--mono);font-size:0.78rem;width:96px;flex:none;color:var(--ink)}
+  .prob .bar{flex:1;height:8px;background:var(--line-strong);border-radius:4px;position:relative;overflow:hidden}
+  .prob .bar i{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-soft));border-radius:4px;transition:width 1.1s cubic-bezier(.16,1,.3,1)}
+  .stage.in .prob .bar i{width:var(--w)}
+  .prob .pct{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);width:56px;text-align:right;flex:none}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.8rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.5rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.06em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .learns{display:flex;flex-wrap:wrap;gap:0.55rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.86rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.45rem 0.85rem;background:var(--chip-bg)}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.45rem;font-family:var(--mono);font-size:0.72rem}
+  .steps{display:flex;flex-direction:column;gap:0}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.5rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.72rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);width:27px;height:27px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.7rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc span{display:block;color:var(--ink-dim);font-size:0.92rem;margin-top:0.15rem;line-height:1.65}
+  .step:not(:last-child)::before{content:"";position:absolute;left:13px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+  /* matrices */
+  .matblock{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:0.7rem 1.4rem}
+  .matunit{display:flex;flex-direction:column;align-items:center;gap:0.55rem}
+  .matname{font-family:var(--serif);font-size:1.05rem;color:var(--ink)}
+  .matname b{font-style:italic;color:var(--accent);font-weight:500}
+  .matname span{font-family:var(--mono);font-size:0.56rem;color:var(--ink-faint);letter-spacing:0.06em;margin-left:0.35rem}
+  .matflex{display:flex;align-items:center;gap:0.45rem}
+  .rowlab{display:flex;flex-direction:column;gap:0.4rem;justify-content:center}
+  .rowlab span{height:32px;display:grid;place-items:center;font-family:var(--mono);font-size:0.72rem;color:var(--accent-soft)}
+  .matrix{position:relative;display:flex;flex-direction:column;gap:0.4rem;padding:0.4rem 0.75rem}
+  .matrix::before,.matrix::after{content:"";position:absolute;top:3px;bottom:3px;width:7px;border:1.6px solid var(--ink-faint)}
+  .matrix::before{left:-1px;border-right:none;border-radius:5px 0 0 5px}
+  .matrix::after{right:-1px;border-left:none;border-radius:0 5px 5px 0}
+  .mrow{display:flex;gap:0.4rem}
+  .mcell{width:40px;height:32px;display:grid;place-items:center;font-family:var(--mono);font-size:0.76rem;color:var(--ink);background:var(--chip-bg);border:1px solid var(--line);border-radius:5px;transition:background .45s,border-color .45s,color .45s,transform .45s,opacity .45s}
+  .mcell.hl{background:rgba(200,100,60,0.22);border-color:var(--accent);color:var(--accent-soft);transform:translateY(-2px)}
+  .mcell.hl2{background:rgba(127,145,131,0.18);border-color:var(--sage);color:var(--sage)}
+  .mcell.lo{opacity:0.3}
+  .matop{font-family:var(--serif);font-size:1.25rem;color:var(--ink-faint);font-style:italic;padding:0 0.1rem}
+  .matcap{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--sage);margin-top:0.1rem}
+
+  /* ── post-specific visuals ───────────────────────────────── */
+  /* 01 · autoregressive loop */
+  .genloop{display:flex;flex-direction:column;gap:0.7rem}
+  .glrow{display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;font-family:var(--mono);font-size:0.82rem}
+  .glin{display:inline-flex;gap:0.35rem;align-items:center;border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.4rem 0.7rem;background:var(--chip-bg);color:var(--ink-dim)}
+  .glin b{color:var(--ink);font-weight:500}
+  .glin .new{color:var(--accent);font-weight:500}
+  .glar{color:var(--ink-faint)}
+  .glout{color:var(--sage)}
+  .glout b{color:var(--accent-soft);font-weight:500}
+
+  /* 02 · redundancy strip */
+  .redun{display:flex;flex-direction:column;gap:0.8rem}
+  .rstep{display:flex;align-items:center;gap:0.9rem;flex-wrap:wrap}
+  .rlab{font-family:var(--mono);font-size:0.7rem;color:var(--ink-faint);width:54px;flex:none}
+  .rcells{display:flex;gap:0.4rem}
+  .rc{width:40px;height:34px;display:grid;place-items:center;font-family:var(--serif);font-size:0.95rem;border-radius:6px;border:1px solid var(--line)}
+  .rc.fresh{background:rgba(200,100,60,0.18);border-color:var(--accent);color:var(--accent-soft)}
+  .rc.dup{border-style:dashed;border-color:var(--line-strong);color:var(--ink-faint);background:transparent}
+
+  /* 04 · reuse table */
+  .reuse{display:flex;flex-direction:column;gap:0.5rem;font-family:var(--mono);font-size:0.8rem}
+  .rurow{display:grid;grid-template-columns:1.1fr 2.2fr 1fr;gap:0.8rem;align-items:center;padding:0.55rem 0.8rem;border:1px solid var(--line);border-radius:8px;background:var(--chip-bg)}
+  .rurow.ruhead{background:transparent;border-style:none;border-bottom:1px dashed var(--line);border-radius:0;color:var(--ink-faint);font-size:0.66rem;letter-spacing:0.08em;text-transform:uppercase;padding-bottom:0.4rem}
+  .rurow .ruq{color:var(--accent)}
+  .rurow .ruk{color:var(--sage)}
+  .rurow .ruv{color:var(--accent-soft)}
+  .rno{color:var(--ink-faint)}
+  .ryes{color:var(--accent);font-weight:500}
+  @media(max-width:560px){.rurow{grid-template-columns:1fr 1fr;gap:0.4rem}.rurow span:nth-child(2){grid-column:1/-1;color:var(--ink-dim);font-size:0.72rem}}
+
+  /* 07 · prefill vs decode */
+  .phases{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  @media(max-width:560px){.phases{grid-template-columns:1fr}}
+  .phase{border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.1rem;background:var(--chip-bg);display:flex;flex-direction:column;gap:0.7rem}
+  .phname{font-family:var(--serif);font-size:1.15rem;color:var(--ink)}
+  .phname span{font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);letter-spacing:0.1em;margin-left:0.4rem;text-transform:uppercase}
+  .phase ul{list-style:none;display:flex;flex-direction:column;gap:0.45rem}
+  .phase li{font-size:0.92rem;color:var(--ink-dim);padding-left:1rem;position:relative;line-height:1.55}
+  .phase li::before{content:"·";position:absolute;left:0.2rem;color:var(--accent)}
+  .phase li b{color:var(--accent-soft);font-weight:500}
+  .phtag{align-self:flex-start;margin-top:auto;font-family:var(--mono);font-size:0.62rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.35rem 0.7rem;border-radius:1rem;border:1px solid}
+  .phtag.compute{color:var(--accent);border-color:rgba(200,100,60,0.4)}
+  .phtag.mem{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+
+  /* 09 · head-sharing diagrams */
+  .shareset{display:grid;grid-template-columns:repeat(3,1fr);gap:0.9rem}
+  @media(max-width:560px){.shareset{grid-template-columns:1fr}}
+  .sharebox{border:1px solid var(--line);border-radius:10px;padding:1rem 0.8rem;background:var(--chip-bg);display:flex;flex-direction:column;align-items:center;gap:0.7rem}
+  .shname{font-family:var(--mono);font-size:0.74rem;color:var(--ink);letter-spacing:0.06em}
+  .sharemap{display:flex;flex-direction:column;gap:0.5rem;align-items:center}
+  .shrow{display:flex;gap:4px}
+  .shq{width:15px;height:15px;border-radius:3px;border:1px solid var(--line-strong)}
+  .shk{width:15px;height:15px;border-radius:3px}
+  .shsub{font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);text-align:center;line-height:1.5}
+  .shsub b{color:var(--accent-soft);font-weight:500}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5;opacity:0;transition:opacity 1s}
+  .finale.show{opacity:1}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:32ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+  .replay{margin:2.4rem auto 0;display:block;cursor:pointer;background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.16em;text-transform:uppercase;transition:color .4s;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .replay:hover{color:var(--accent)}
+
+  /* ── controls ────────────────────────────────────────────── */
+  .auto-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);font-family:var(--mono);font-size:0.62rem;letter-spacing:0.12em;text-transform:uppercase;padding:0.45rem 0.9rem;border-radius:1rem;transition:all .4s}
+  .auto-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .auto-btn.on{border-color:var(--sage);color:var(--sage)}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">KV 缓存 · <b>逐步拆开</b></div>
+    </div>
+    <div class="progress-wrap">
+      <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="auto-btn" id="autoBtn">自动播放</button>
+      <div class="progress-num"><b id="pNum">00</b> / 10</div>
+      <div class="progress-track"><div class="progress-fill" id="pFill"></div></div>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail"></nav>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="kicker">A Field Guide · KV 缓存</div>
+      <h1>
+        <span class="l">KV 缓存，</span>
+        <span class="l">让生成不必<em>从头再来</em>。</span>
+      </h1>
+      <p class="sub">你看着模型一个字一个字往外蹦，却几乎不卡。秘密不是什么高深算法，而是一条最朴素的工程直觉用对了地方——<b>别重算不变的东西</b>。它把每一步的计算量，从 <span class="mathx">\(O(n^2)\)</span> 压到了 <span class="mathx">\(O(n)\)</span>。</p>
+      <div class="meta">
+        <div><b>O(n²)→O(n)</b>省下的计算</div>
+        <div><b>0.5 MB</b>每 token 显存</div>
+        <div><b>2</b>个推理阶段</div>
+      </div>
+      <button class="start-btn" id="startBtn">开始拆解 <span class="arc">↓</span></button>
+    </section>
+
+    <!-- FLOW -->
+    <section class="flow" id="flow">
+      <div class="spine"><div class="lit" id="lit"></div></div>
+
+      <!-- 01 · 自回归 -->
+      <article class="stage" data-phase="循环">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">01</span><span class="stage-en">Autoregression</span><span class="stage-phase">循环</span></div>
+        <h2 class="reveal d1">生成，是一个循环</h2>
+        <p class="desc reveal d1">大模型生成文字是<b>自回归</b>的：每次只预测<b>下一个</b> token，把它接到序列末尾，再用更长的序列预测再下一个。于是生成一段 100 词的回答，本质上就是把整座网络<b>前向跑 100 遍</b>，而且每一遍的输入，都比上一遍长一个词。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">逐词生成 / one token at a time</div>
+          <div class="genloop" id="genLoop">
+            <div class="glrow"><span class="glin">输入 <b>猫</b></span><span class="glar">→</span><span class="glout">预测 <b>很</b></span></div>
+            <div class="glrow"><span class="glin">输入 <b>猫</b> <span class="new">很</span></span><span class="glar">→</span><span class="glout">预测 <b>累</b></span></div>
+            <div class="glrow"><span class="glin">输入 <b>猫 很</b> <span class="new">累</span></span><span class="glar">→</span><span class="glout">预测 <b>…</b></span></div>
+          </div>
+          <div class="note">每一轮，序列只在末尾<b>多一个词</b>（橙色）。前面的词，一字未改——这个不变性，正是后面一切优化的根。</div>
+        </div>
+      </article>
+
+      <!-- 02 · 浪费 -->
+      <article class="stage" data-phase="浪费">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">02</span><span class="stage-en">The Redundancy</span><span class="stage-phase">浪费</span></div>
+        <h2 class="reveal d1">朴素做法，在重复劳动</h2>
+        <p class="desc reveal d1">问题来了。第 <span class="mathx">\(t\)</span> 步要对 <span class="mathx">\(t\)</span> 个 token 做一次因果自注意力，标准做法是为<b>当前序列里的每一个</b> token 重新算 Q、K、V。可其中前 <span class="mathx">\(t-1\)</span> 个，<b>上一步刚刚算过</b>，而且结果分毫不差。把每一步累加，重复计算量是 <span class="mathx">\(1+2+\cdots+n = O(n^2)\)</span>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">每个格子 = 一次 K/V 计算</div>
+          <div class="redun" id="redun">
+            <div class="rstep"><div class="rlab">第 1 步</div><div class="rcells"><span class="rc fresh">猫</span></div></div>
+            <div class="rstep"><div class="rlab">第 2 步</div><div class="rcells"><span class="rc dup">猫</span><span class="rc fresh">很</span></div></div>
+            <div class="rstep"><div class="rlab">第 3 步</div><div class="rcells"><span class="rc dup">猫</span><span class="rc dup">很</span><span class="rc fresh">累</span></div></div>
+          </div>
+          <div class="note">虚线灰格 = 与上一步<b>完全重复</b>的计算。橙格才是这一步真正<b>新增</b>的那一个。重复的部分，越往后越多。</div>
+        </div>
+      </article>
+
+      <!-- 03 · K/V 不变 -->
+      <article class="stage" data-phase="观察">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">The Frozen Past</span><span class="stage-phase key">观察</span></div>
+        <h2 class="reveal d1">关键：过去的 K、V 永不改变</h2>
+        <p class="desc reveal d1">为什么「结果分毫不差」？因为在<b>因果</b>注意力里，每个 token 的 K、V <b>只由它自己</b>那一刻的隐状态决定，而它<b>看不到后面</b>的词——所以它的隐状态一旦算出就被<b>冻住</b>，往后每一步都一样。「猫」的 <span class="mathx">\(k\)</span>、<span class="mathx">\(v\)</span> 在第 1、2、3 步里，是<b>同一个向量</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">三步里的 k猫，逐位相同</div>
+          <div class="matblock" id="kvConst"></div>
+          <div class="note">既然每一步都在重算<b>同一个</b>结果，那把它算一次、<b>存下来</b>，不就够了？这就是 KV 缓存的全部动机。</div>
+        </div>
+      </article>
+
+      <!-- 04 · 为什么不缓存 Q -->
+      <article class="stage" data-phase="取舍">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Why Not Q</span><span class="stage-phase">取舍</span></div>
+        <h2 class="reveal d1">那为什么不缓存 Q？</h2>
+        <p class="desc reveal d1">注意一个<b>不对称</b>：每一步你只用<b>当前新 token</b> 的查询 <span class="mathx">\(q_t\)</span> 去对历史打分；过去那些 query <b>用完即弃</b>、再不复用。而 K、V 会被<b>未来每一个</b> query 反复查询。判据很简单——<b>未来还会被用到的，才值得缓存</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">谁该被存下来 / what to keep</div>
+          <div class="reuse" id="reuseTbl">
+            <div class="rurow ruhead"><span>向量</span><span>未来还会被用到？</span><span>缓存吗</span></div>
+            <div class="rurow"><span class="ruq">Q · 查询</span><span>否 —— 当前步用完即弃</span><span class="rno">✗ 丢弃</span></div>
+            <div class="rurow"><span class="ruk">K · 键</span><span>是 —— 被每个未来 query 打分</span><span class="ryes">✓ 缓存</span></div>
+            <div class="rurow"><span class="ruv">V · 值</span><span>是 —— 被每个未来 query 取用</span><span class="ryes">✓ 缓存</span></div>
+          </div>
+          <div class="note">所以名字叫 <b>KV 缓存</b>，而不是 QKV 缓存——Q 天生留不住，也不必留。</div>
+        </div>
+      </article>
+
+      <!-- 05 · KV 缓存机制 -->
+      <article class="stage" data-phase="机制">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">The KV Cache</span><span class="stage-phase key">机制</span></div>
+        <h2 class="reveal d1">把 K、V 存进缓存</h2>
+        <p class="desc reveal d1">于是机制呼之欲出：开一块内存，<b>按层、按头</b>存下每个 token 的 <span class="mathx">\(k\)</span>、<span class="mathx">\(v\)</span> 向量。每生成一个新 token，<b>只算它自己</b>的 <span class="mathx">\(k\)</span>、<span class="mathx">\(v\)</span>，<b>追加</b>到缓存末尾，再用它的 <span class="mathx">\(q\)</span> 对<b>整个缓存</b>做一次注意力。每一步的新计算量，从「整段历史」缩到「一个词」。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">缓存的结构 / 一行 = 一个 token</div>
+          <div class="matblock" id="cacheStruct"></div>
+          <div class="note">底部橙色行 = 当前步<b>新算并追加</b>的；上方绿色行 = 直接从缓存<b>复用</b>，不再计算。缓存只增不改，每步长高一行。</div>
+        </div>
+      </article>
+
+      <!-- 06 · 逐步演示 -->
+      <article class="stage" data-phase="演算">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">Worked Example</span><span class="stage-phase key">演算</span></div>
+        <h2 class="reveal d1">连数字一起：看缓存长大</h2>
+        <p class="desc reveal d1">把「猫很累」当成一句<b>正在被生成</b>的话（数字沿用上一篇《注意力机制》）。每喂入一个词，缓存只<b>新增一行</b>，其余都是<b>旧行复用</b>。到第 3 步喂入「累」，<span class="mathx">\(q_{\text{累}}\)</span> 对三行 key 打分——正是上一篇<b>亲手算过</b>的那一步。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">缓存逐步追加 / K-cache & V-cache</div>
+          <div class="matblock"><div id="wcK"></div><div id="wcV"></div></div>
+          <div class="note">第 1 步喂「猫」→ 缓存 1 行；第 2 步喂「很」→ 只算 1 行、追加；第 3 步喂「累」→ 又只算 1 行。<b>始终只有底部一行是新计算。</b></div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">最后一步：用 q累 查询整个缓存</div>
+          <div class="mathrow">\[ [\,3,\;0,\;2\,]\ \xrightarrow{\ \div\sqrt{d_k}\ }\ [\,1.5,\;0,\;1.0\,]\ \xrightarrow{\ \text{softmax}\ }\ [\,0.55,\;0.12,\;0.33\,] \]</div>
+          <div class="probs" id="wcProbs">
+            <div class="prob"><span class="t">→ 猫</span><span class="bar"><i style="--w:55%"></i></span><span class="pct">0.55</span></div>
+            <div class="prob"><span class="t">→ 很</span><span class="bar"><i style="--w:12%"></i></span><span class="pct">0.12</span></div>
+            <div class="prob"><span class="t">→ 累</span><span class="bar"><i style="--w:33%"></i></span><span class="pct">0.33</span></div>
+          </div>
+          <div class="note">分数 <span class="mathx">\([3,0,2]\)</span> 来自 <span class="mathx">\(q_{\text{累}}\)</span> 与缓存里三行 key 的点积。缓存让这一步<b>不必重算</b> <span class="mathx">\(k_{\text{猫}}\)</span>、<span class="mathx">\(k_{\text{很}}\)</span>——它们早就在缓存里了。</div>
+        </div>
+      </article>
+
+      <!-- 07 · Prefill vs Decode -->
+      <article class="stage" data-phase="两阶段">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">Prefill vs Decode</span><span class="stage-phase">两阶段</span></div>
+        <h2 class="reveal d1">两个性格迥异的阶段</h2>
+        <p class="desc reveal d1">有了缓存，推理自然分成两段。<b>Prefill</b>（预填充）把整个 prompt <b>一次性并行</b>喂入，一个大矩阵乘就填满整段缓存。<b>Decode</b>（解码）逐 token 生成，每步只追加一行，矩阵乘<b>退化成矩阵×向量</b>。这也是为什么「首字延迟」和「逐字吐字速度」由<b>完全不同</b>的因素决定。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">一次填满 vs 逐行追加</div>
+          <div class="phases" id="phases">
+            <div class="phase">
+              <div class="phname">Prefill<span>预填充</span></div>
+              <ul>
+                <li>整个 prompt <b>并行</b>过一遍</li>
+                <li>一个<b>大矩阵乘</b>填满缓存</li>
+                <li>决定<b>首字延迟</b>（TTFT）</li>
+              </ul>
+              <div class="phtag compute">compute-bound · 算力密集</div>
+            </div>
+            <div class="phase">
+              <div class="phname">Decode<span>解码</span></div>
+              <ul>
+                <li>每步只算 <b>1 个</b> token</li>
+                <li>矩阵乘退化成<b>矩阵 × 向量</b></li>
+                <li>瓶颈是反复<b>搬运缓存</b></li>
+              </ul>
+              <div class="phtag mem">memory-bound · 访存密集</div>
+            </div>
+          </div>
+          <div class="note">Decode 阶段算得很少、却要把整块 KV 缓存从显存反复读进来——于是速度被<b>显存带宽</b>卡住，而不是算力。</div>
+        </div>
+      </article>
+
+      <!-- 08 · 显存代价 -->
+      <article class="stage" data-phase="代价">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">08</span><span class="stage-en">The Memory Cost</span><span class="stage-phase">代价</span></div>
+        <h2 class="reveal d1">代价：缓存吃显存</h2>
+        <p class="desc reveal d1">省下计算，代价是<b>显存</b>。缓存大小正比于「层数 × 序列长 × batch」。算一笔真账——<b>Llama-2-7B</b>（32 层、<span class="mathx">\(d_{\text{model}}=4096\)</span>、fp16），每个 token 的 KV 约 <b>0.5 MB</b>；4096 上下文就是 <b>2 GB</b>，而这只是<b>一条</b>请求。上下文一长、并发一高，KV 缓存就<b>撑爆显存</b>。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">缓存大小公式</div>
+          <div class="mathrow">\[ \text{KV cache} = 2 \times L \times n_{\text{kv}} \times d_{\text{head}} \times \text{seq} \times \text{batch} \times \text{bytes} \]</div>
+          <div class="facts" style="margin-top:1.2rem">
+            <div class="fact"><b data-to="0.5" data-suf=" MB" data-dec="1">0.5 MB</b><span>每 token（7B,fp16）</span></div>
+            <div class="fact"><b data-to="2" data-suf=" GB" data-dec="0">2 GB</b><span>4K 上下文 · 单条</span></div>
+            <div class="fact"><b>线性</b><span>随 seq 与 batch 增长</span></div>
+          </div>
+          <div class="viz-cap" style="margin:1.4rem 0 0.8rem">同一条请求，缓存随上下文线性膨胀</div>
+          <div class="probs" id="growth">
+            <div class="prob"><span class="t">512 token</span><span class="bar"><i style="--w:6%"></i></span><span class="pct">0.25G</span></div>
+            <div class="prob"><span class="t">2K token</span><span class="bar"><i style="--w:25%"></i></span><span class="pct">1G</span></div>
+            <div class="prob"><span class="t">4K token</span><span class="bar"><i style="--w:50%"></i></span><span class="pct">2G</span></div>
+            <div class="prob"><span class="t">8K token</span><span class="bar"><i style="--w:100%"></i></span><span class="pct">4G</span></div>
+          </div>
+          <div class="note">公式里开头的 <b>2</b>，就是「K 和 V 各存一份」。<span class="mathx">\(n_{\text{kv}}\times d_{\text{head}}\)</span> 合起来就是模型维度——下一步要动的，正是这块。</div>
+        </div>
+      </article>
+
+      <!-- 09 · 瘦身 -->
+      <article class="stage" data-phase="优化">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">09</span><span class="stage-en">Slimming It Down</span><span class="stage-phase key">优化</span></div>
+        <h2 class="reveal d1">给缓存瘦身的几招</h2>
+        <p class="desc reveal d1">既然瓶颈是缓存的<b>大小</b>，那就让多个 query 头<b>共享</b>同一份 K、V。<b>MQA</b> 让所有头共享一份，缓存直接缩小 <span class="mathx">\(h\)</span> 倍；<b>GQA</b> 折中——<b>每组</b>头共享一份（Llama-2-70B：64 query 头配 8 KV 头，<b>8× 更小</b>；Llama-3 全系采用）。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">K、V 头怎么被共享 / 上排 query 头 · 颜色 = 共享同一份 KV</div>
+          <div class="shareset" id="headShare"></div>
+          <div class="note">同色的 query 头，<b>共用一份</b> K、V。从 MHA 到 MQA，KV 头从 8 缩到 1，缓存也就缩到 1/8。</div>
+        </div>
+        <div class="viz reveal d3">
+          <div class="viz-cap">不止瘦身：还有管理与压缩</div>
+          <div class="steps">
+            <div class="step"><span class="si">1</span><div class="sc"><b>GQA / MQA<em>共享 KV 头</em></b><span>从结构上减少要存的 K、V 份数，今天的开源大模型几乎都用。</span></div></div>
+            <div class="step"><span class="si">2</span><div class="sc"><b>PagedAttention<em>vLLM</em></b><span>像操作系统分页一样管理缓存，消除碎片、逼近零浪费，吞吐大涨。</span></div></div>
+            <div class="step"><span class="si">3</span><div class="sc"><b>滑动窗口<em>Sliding Window</em></b><span>只保留最近 N 个 token 的 KV（如 Mistral），让缓存不再无限增长。</span></div></div>
+            <div class="step"><span class="si">4</span><div class="sc"><b>KV 量化<em>int8 / int4</em></b><span>把缓存里的数值压到更低精度，用一点精度换一半甚至更多显存。</span></div></div>
+          </div>
+          <div class="note">它们解决的是同一个问题的不同侧面：<b>让那块只增不减的缓存，别那么贵。</b></div>
+        </div>
+      </article>
+
+      <!-- 10 · 收束 -->
+      <article class="stage" data-phase="收束">
+        <span class="node"></span>
+        <div class="stage-head reveal"><span class="stage-no">10</span><span class="stage-en">The Big Idea</span><span class="stage-phase">收束</span></div>
+        <h2 class="reveal d1">一句话，归位</h2>
+        <p class="desc reveal d1">回头看，KV 缓存没有任何魔法。它只是把一条最朴素的工程直觉——<b>别重算不变的东西</b>——精确地安放在因果注意力的一个结构性事实上：<b>过去的 K、V 不会改变</b>。用一点显存，换掉一整座 <span class="mathx">\(O(n^2)\)</span> 的计算冗余。</p>
+        <div class="viz reveal d2">
+          <div class="viz-cap">四个节拍 / the whole idea</div>
+          <div class="learns">
+            <span class="learn"><i>观察</i>过去的 K、V 冻住不变</span>
+            <span class="learn"><i>缓存</i>存下 K、V，丢掉旧 Q</span>
+            <span class="learn"><i>两阶段</i>Prefill 填满，Decode 追加</span>
+            <span class="learn"><i>代价</i>显存线性增长，于是瘦身</span>
+          </div>
+          <div class="note">今天你用的<b>每一个</b>大模型，背后都靠这块缓存，把「逐字生成」变得可负担。</div>
+        </div>
+      </article>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Walkthrough</div>
+      <h3>从「每步重算整段历史」到「每步只算一个新词」——这一块缓存，撑起了今天所有大模型的流畅吐字。</h3>
+      <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
+      <button class="replay" id="replayBtn">↺ 再拆一遍</button>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  const stages=Array.from(document.querySelectorAll('.stage'));
+  const rail=document.getElementById('rail');
+  const pNum=document.getElementById('pNum'), pFill=document.getElementById('pFill'), lit=document.getElementById('lit');
+  const startBtn=document.getElementById('startBtn'), autoBtn=document.getElementById('autoBtn');
+  const finale=document.getElementById('finale'), replayBtn=document.getElementById('replayBtn');
+  let current=-1, auto=false, autoTimer=null;
+  const railLabels=['自回归','浪费','不变','取舍','缓存','演算','两阶段','显存','瘦身','收束'];
+
+  railLabels.forEach((lbl,i)=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="dot"></span><span class="lbl">${String(i+1).padStart(2,'0')} ${lbl}</span>`;
+    b.addEventListener('click',()=>{ stages[i].scrollIntoView({behavior:'smooth',block:'start'}); });
+    rail.appendChild(b);
+  });
+  const railBtns=Array.from(rail.children);
+
+  function updateProgress(){
+    const n=current+1;
+    pNum.textContent=String(n).padStart(2,'0');
+    pFill.style.width=(n/stages.length*100)+'%';
+    lit.style.height=(n/stages.length*100)+'%';
+    railBtns.forEach((b,i)=>{ b.classList.toggle('active',i===current); b.classList.toggle('done',i<current); });
+  }
+
+  // scroll-driven reveal: replay effects EVERY time a stage enters view,
+  // reset them when it leaves — animations refresh on each pass, not just once.
+  const revealObserver=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){ e.target.classList.add('in'); resetStageEffect(idx); runStageEffect(idx); }
+      } else if(e.target.classList.contains('in')){ e.target.classList.remove('in'); resetStageEffect(idx); }
+    });
+  },{threshold:0,rootMargin:'0px 0px -20% 0px'});
+  stages.forEach(s=>revealObserver.observe(s));
+
+  new IntersectionObserver((entries)=>{ entries.forEach(e=>{ if(e.isIntersecting) finale.classList.add('show'); }); },{threshold:0.3}).observe(finale);
+
+  let ticking=false;
+  window.addEventListener('scroll',()=>{
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const line=window.innerHeight*0.45; let idx=-1;
+      stages.forEach((s,i)=>{ if(s.getBoundingClientRect().top<=line) idx=i; });
+      if(idx!==current){ current=idx; updateProgress(); }
+      if(current>=0) rail.classList.add('show');
+      ticking=false;
+    });
+  },{passive:true});
+
+  startBtn.addEventListener('click',()=>{ rail.classList.add('show'); stages[0].scrollIntoView({behavior:'smooth',block:'start'}); });
+
+  function autoTick(){
+    if(!auto) return;
+    const next=current+1;
+    if(next>=stages.length){ finale.scrollIntoView({behavior:'smooth',block:'center'}); stopAuto(); return; }
+    stages[next].scrollIntoView({behavior:'smooth',block:'start'});
+    autoTimer=setTimeout(autoTick,4600);
+  }
+  function stopAuto(){ auto=false; autoBtn.classList.remove('on'); autoBtn.textContent='自动播放'; if(autoTimer)clearTimeout(autoTimer); }
+  autoBtn.addEventListener('click',()=>{ if(auto){ stopAuto(); return; } auto=true; autoBtn.classList.add('on'); autoBtn.textContent='■ 停止'; rail.classList.add('show'); autoTick(); });
+
+  replayBtn.addEventListener('click',()=>{
+    stopAuto();
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
+    finale.classList.remove('show');
+    current=-1; updateProgress();
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+
+  // ── matrix builder ──
+  function makeMatrix(data,{name='',dim='',rowLabels=null,id=null}={}){
+    const unit=document.createElement('div');unit.className='matunit';
+    if(name||dim){const nm=document.createElement('div');nm.className='matname';nm.innerHTML=`<b>${name}</b>`+(dim?`<span>${dim}</span>`:'');unit.appendChild(nm);}
+    const flex=document.createElement('div');flex.className='matflex';
+    if(rowLabels){const rl=document.createElement('div');rl.className='rowlab';rowLabels.forEach(t=>{const s=document.createElement('span');s.textContent=t;rl.appendChild(s);});flex.appendChild(rl);}
+    const m=document.createElement('div');m.className='matrix';if(id)m.id=id;
+    data.forEach((row,r)=>{const rr=document.createElement('div');rr.className='mrow';rr.dataset.r=r;row.forEach((val,c)=>{const cell=document.createElement('div');cell.className='mcell';cell.dataset.r=r;cell.dataset.c=c;cell.textContent=val;rr.appendChild(cell);});m.appendChild(rr);});
+    flex.appendChild(m);unit.appendChild(flex);return unit;
+  }
+  function op(sym){const s=document.createElement('span');s.className='matop';s.textContent=sym;return s;}
+
+  // ── worked-example data (sticks with the previous post's 「猫很累」) ──
+  const toks=['猫','很','累'];
+  const Kc=[[1,0,1,0],[0,1,0,1],[0,0,1,1]];   // k猫, k很, k累
+  const Vc=[[1,0,0],[0,1,0],[0,0,1]];         // v猫, v很, v累
+
+  // ── build static visuals once ──
+  // 03 · k猫 identical across 3 steps
+  (function(){
+    const host=document.getElementById('kvConst');
+    host.append(
+      makeMatrix([Kc[0]],{name:'k猫',dim:'第 1 步'}), op('='),
+      makeMatrix([Kc[0]],{name:'k猫',dim:'第 2 步'}), op('='),
+      makeMatrix([Kc[0]],{name:'k猫',dim:'第 3 步'})
+    );
+  })();
+  // 05 · cache structure (static coloring: bottom fresh, above cached)
+  (function(){
+    const host=document.getElementById('cacheStruct');
+    const k=makeMatrix(Kc,{name:'K-cache',dim:'3×4',rowLabels:toks});
+    const v=makeMatrix(Vc,{name:'V-cache',dim:'3×3',rowLabels:toks});
+    [k,v].forEach(u=>u.querySelectorAll('.mcell').forEach(c=>{ c.classList.add(+c.dataset.r===2?'hl':'hl2'); }));
+    host.append(k,v);
+  })();
+  // 06 · worked-example caches
+  document.getElementById('wcK').appendChild(makeMatrix(Kc,{name:'K-cache',dim:'↓ 逐步追加',rowLabels:toks}));
+  document.getElementById('wcV').appendChild(makeMatrix(Vc,{name:'V-cache',dim:'↓ 逐步追加',rowLabels:toks}));
+  // 09 · head-sharing diagrams (MHA / GQA / MQA)
+  (function(){
+    const host=document.getElementById('headShare');
+    const groupColors=['var(--accent)','var(--sage)','var(--accent-soft)','#9a8d6a','#6a849a','#9a6a84','#7f9a6a','#c8a03c'];
+    const variants=[['MHA','8 query · 8 KV',8],['GQA','8 query · 2 KV',2],['MQA','8 query · 1 KV',1]];
+    variants.forEach(([name,sub,kv])=>{
+      const box=document.createElement('div');box.className='sharebox';
+      const map=document.createElement('div');map.className='sharemap';
+      const qrow=document.createElement('div');qrow.className='shrow';
+      const krow=document.createElement('div');krow.className='shrow';
+      const per=8/kv;
+      for(let q=0;q<8;q++){ const g=Math.floor(q/per); const d=document.createElement('div');d.className='shq';d.style.background=groupColors[g];d.style.borderColor='transparent';qrow.appendChild(d); }
+      for(let g=0;g<kv;g++){ const d=document.createElement('div');d.className='shk';d.style.background=groupColors[g];d.style.width=(15*per+4*(per-1))+'px';krow.appendChild(d); }
+      map.append(qrow,krow);
+      const nm=document.createElement('div');nm.className='shname';nm.textContent=name;
+      const sb=document.createElement('div');sb.className='shsub';sb.innerHTML=sub.replace(/(\d+) KV/,'<b>$1 KV</b>');
+      box.append(nm,map,sb);host.appendChild(box);
+    });
+  })();
+
+  // ── per-stage animation engine (replayable; timers/rAFs tracked per stage) ──
+  const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){ (timers[i]||[]).forEach(clearTimeout); timers[i]=[]; (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[]; }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+  function countUp(i,el,target,{dur=950,dec=2,suffix=''}={}){
+    const start=performance.now();
+    const step=now=>{ const t=Math.min(1,(now-start)/dur), e=1-Math.pow(1-t,3); el.textContent=(target*e).toFixed(dec)+suffix; if(t<1)(rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step)); };
+    (rafs[i]=rafs[i]||[]).push(requestAnimationFrame(step));
+  }
+  function fadeSeq(i,els,{base=150,step=140,dy=10}={}){
+    els.forEach(el=>{ el.style.opacity='0'; el.style.transform=`translateY(${dy}px)`; });
+    els.forEach((el,k)=>later(i,()=>{ el.style.transition='opacity .55s ease,transform .55s ease'; el.style.opacity=''; el.style.transform=''; }, base+k*step));
+  }
+  function animateProbs(scope,i){
+    scope.querySelectorAll('.prob .bar i').forEach(el=>{ const w=el.style.getPropertyValue('--w'); el.style.width='0'; later(i,()=>{ el.style.width=w; },180); });
+  }
+
+  function runStageEffect(i){
+    if(reduceMotion) return;            // static fallbacks already show everything
+    if(i===0) fadeSeq(i, document.querySelectorAll('#genLoop .glrow'), {base:200,step:380});
+    if(i===1) animateRedun(i);
+    if(i===2) animateKvConst(i);
+    if(i===3) fadeSeq(i, document.querySelectorAll('#reuseTbl .rurow'), {base:150,step:200});
+    if(i===4) animateCache(i, document.querySelector('#cacheStruct'));
+    if(i===5) animateWorked(i);
+    if(i===6) fadeSeq(i, document.querySelectorAll('#phases .phase'), {base:200,step:320,dy:14});
+    if(i===7) animateMemory(i);
+    if(i===8){ fadeSeq(i, document.querySelectorAll('#headShare .sharebox'), {base:150,step:240,dy:14}); }
+    // i===9 relies on the CSS .in reveal (chips pop)
+  }
+
+  // 02 · reveal each step, then flash the fresh cell
+  function animateRedun(i){
+    const steps=document.querySelectorAll('#redun .rstep');
+    fadeSeq(i, steps, {base:150,step:340});
+    steps.forEach((s,k)=>{ const fresh=s.querySelector('.rc.fresh'); later(i,()=>{ fresh.style.transition='transform .4s ease'; fresh.style.transform='scale(1.12)'; later(i,()=>fresh.style.transform='',360); }, 150+k*340+260); });
+  }
+
+  // 03 · light up the three k猫 rows in turn
+  function animateKvConst(i){
+    const rows=document.querySelectorAll('#kvConst .mrow');
+    rows.forEach((r,k)=>{ const cells=r.querySelectorAll('.mcell'); later(i,()=>cells.forEach(c=>c.classList.add('hl')), 350+k*520); });
+  }
+
+  // 04/05 · reveal cache rows bottom-up: newest accent, older settle to sage
+  function animateCache(i, scope){
+    scope.querySelectorAll('.matrix').forEach(m=>{
+      const rows=Array.from(m.querySelectorAll('.mrow'));
+      rows.forEach(r=>r.querySelectorAll('.mcell').forEach(c=>{c.classList.remove('hl','hl2');c.style.opacity='0';c.style.transform='translateY(-6px)';}));
+      rows.forEach((r,k)=>{
+        const cells=r.querySelectorAll('.mcell');
+        later(i,()=>{ cells.forEach(c=>{c.style.transition='opacity .45s,transform .45s';c.style.opacity='';c.style.transform='';c.classList.add('hl');}); }, 350+k*620);
+        if(k<rows.length-1) later(i,()=>cells.forEach(c=>{c.classList.remove('hl');c.classList.add('hl2');}), 350+(k+1)*620);
+      });
+    });
+  }
+
+  // 06 · grow both caches, then resolve the final-step weights
+  function animateWorked(i){
+    animateCache(i, document.querySelector('.stage[data-phase="演算"] .viz'));
+    const probsViz=document.getElementById('wcProbs');
+    const vals=[0.55,0.12,0.33];
+    probsViz.querySelectorAll('.pct').forEach((pct,k)=>{ pct.textContent='0.00'; });
+    animateProbs(probsViz,i);
+    probsViz.querySelectorAll('.pct').forEach((pct,k)=>later(i,()=>countUp(i,pct,vals[k],{dur:950,dec:2}), 2400+k*140));
+  }
+
+  // 08 · count the headline numbers up, then fill the growth bars
+  function animateMemory(i){
+    document.querySelectorAll('.stage[data-phase="代价"] .fact b[data-to]').forEach(b=>{
+      const to=parseFloat(b.dataset.to), suf=b.dataset.suf||'', dec=+b.dataset.dec||0;
+      b.textContent=(0).toFixed(dec)+suf;
+      later(i,()=>countUp(i,b,to,{dur:1000,dec,suffix:suf}), 300);
+    });
+    animateProbs(document.getElementById('growth'),i);
+  }
+
+  // ── reset a stage back to its pre-animation (and reduced-motion) state ──
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===0) document.querySelectorAll('#genLoop .glrow').forEach(el=>el.style.cssText='');
+    if(i===1) document.querySelectorAll('#redun .rstep, #redun .rc').forEach(el=>el.style.cssText='');
+    if(i===2) document.querySelectorAll('#kvConst .mcell').forEach(c=>c.classList.remove('hl'));
+    if(i===3) document.querySelectorAll('#reuseTbl .rurow').forEach(el=>el.style.cssText='');
+    if(i===4) document.querySelectorAll('#cacheStruct .mcell').forEach(c=>{ c.style.cssText=''; c.classList.remove('hl','hl2'); c.classList.add(+c.dataset.r===2?'hl':'hl2'); });
+    if(i===5){
+      document.querySelectorAll('#wcK .mcell, #wcV .mcell').forEach(c=>{ c.style.cssText=''; c.classList.remove('hl','hl2'); c.classList.add(+c.dataset.r===2?'hl':'hl2'); });
+      const vals=[0.55,0.12,0.33]; document.querySelectorAll('#wcProbs .pct').forEach((pct,k)=>pct.textContent=vals[k].toFixed(2));
+    }
+    if(i===6) document.querySelectorAll('#phases .phase').forEach(el=>el.style.cssText='');
+    if(i===7){ document.querySelectorAll('.stage[data-phase="代价"] .fact b[data-to]').forEach(b=>{ const dec=+b.dataset.dec||0; b.textContent=parseFloat(b.dataset.to).toFixed(dec)+(b.dataset.suf||''); }); }
+    if(i===8) document.querySelectorAll('#headShare .sharebox').forEach(el=>el.style.cssText='');
+  }
+
+  // ── render every formula with KaTeX (deferred CDN scripts) ──
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{ renderMathInElement(document.querySelector('main'), {delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}], throwOnError:false, trust:true, strict:false}); }catch(e){}
+    }
+  }
+  if(window.katex && window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded', renderAllMath);
+
+  updateProgress();
+})();
+</script>
+</body>
+</html>
