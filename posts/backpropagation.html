@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 <style>
   :root{
     --bg:#0d0e10; --bg-soft:#131417;
@@ -270,6 +273,9 @@
   [data-theme="light"] .theme-btn .sun{display:none}
   [data-theme="light"] .theme-btn .moon{display:block}
 
+  .katex{font-size:1.02em}
+  .desc .katex,.note .katex{font-size:1em}
+
   /* ── keyframes + reduced motion ──────────────────────────── */
   @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
   @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
@@ -330,7 +336,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">01</span><span class="stage-en">The Loss Landscape</span><span class="stage-phase">目标</span></div>
         <h2 class="reveal d1">损失是一座山谷</h2>
-        <p class="desc reveal d1">训练一个网络，本质是<b>最小化一个标量</b>——损失 <code>L</code>。把上亿个参数想成一片地形的坐标，<code>L</code> 就是这片地形的海拔，我们要让每个参数都往<b>下坡</b>挪一点。<br>梯度 <code>∂L/∂θ</code> 正是地形在当前点的<b>最陡上升方向</b>；取个负号，就是下山的指南针。问题只剩一个：网络有上亿参数，怎么<b>一次性</b>算出每一个的偏导？</p>
+        <p class="desc reveal d1">训练一个网络，本质是<b>最小化一个标量</b>——损失 \(L\)。把上亿个参数想成一片地形的坐标，\(L\) 就是这片地形的海拔，我们要让每个参数都往<b>下坡</b>挪一点。<br>梯度 \(\partial L/\partial\theta\) 正是地形在当前点的<b>最陡上升方向</b>；取个负号，就是下山的指南针。问题只剩一个：网络有上亿参数，怎么<b>一次性</b>算出每一个的偏导？</p>
         <div class="viz reveal d2">
           <div class="viz-cap">损失地形 · 梯度即最陡方向</div>
           <svg class="lcurve" id="curve0" viewBox="0 0 520 210" aria-hidden="true">
@@ -340,7 +346,7 @@
             <circle class="lc-ball" cx="126" cy="98" r="7"/>
             <defs><marker id="ah0" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="var(--sage)"/></marker></defs>
           </svg>
-          <div class="note">一步梯度下降：每个参数沿各自的 <b>−∂L/∂θ</b> 移动一小格，海拔（损失）就降一点。反向传播，要解决的就是「如何高效地算出这每一格的方向」。</div>
+          <div class="note">一步梯度下降：每个参数沿各自的 <b>\(-\partial L/\partial\theta\)</b> 移动一小格，海拔（损失）就降一点。反向传播，要解决的就是「如何高效地算出这每一格的方向」。</div>
         </div>
       </article>
 
@@ -383,7 +389,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">03</span><span class="stage-en">The Forward Pass</span><span class="stage-phase">前向</span></div>
         <h2 class="reveal d1">前向传播：记下每一步</h2>
-        <p class="desc reveal d1">拿一个最小的真神经元做例子：两个输入 <code>x₁=2, x₂=3</code>，参数 <code>w₁=−1, w₂=2, b=−3</code>，目标 <code>y=1</code>。<br><b>前向传播</b>从左到右算一遍，并把每个中间值都<b>缓存</b>下来（这是关键——反向时全要用到）：<code>w₁x₁=−2</code>、<code>w₂x₂=6</code>，求和加偏置得 <code>z=1.0</code>，过 sigmoid 得 <code>a=σ(1)=0.731</code>，最后平方误差 <code>L=(a−y)²=0.072</code>。</p>
+        <p class="desc reveal d1">拿一个最小的真神经元做例子：两个输入 \(x_1=2,\ x_2=3\)，参数 \(w_1=-1,\ w_2=2,\ b=-3\)，目标 \(y=1\)。<br><b>前向传播</b>从左到右算一遍，并把每个中间值都<b>缓存</b>下来（这是关键——反向时全要用到）：\(w_1x_1=-2\)、\(w_2x_2=6\)，求和加偏置得 \(z=1.0\)，过 sigmoid 得 \(a=\sigma(1)=0.731\)，最后平方误差 \(L=(a-y)^2=0.072\)。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">前向传播 · 数值从左流到右</div>
           <div class="gwrap"><div id="graphFwd"></div></div>
@@ -396,7 +402,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">The Chain Rule</span><span class="stage-phase key">引擎</span></div>
         <h2 class="reveal d1">链式法则：梯度的引擎</h2>
-        <p class="desc reveal d1">反向传播没有新魔法，它只是把<b>链式法则</b>（chain rule）机械化。想知道 <code>w₁</code> 牵动损失多少，就把这条路径上的局部导数<b>连乘</b>起来。中间量像分数一样<b>逐项抵消</b>，只留下首尾的关系——每个节点只贡献其中一个因子，这正是「本地信息拼出全局梯度」的含义。</p>
+        <p class="desc reveal d1">反向传播没有新魔法，它只是把<b>链式法则</b>（chain rule）机械化。想知道 \(w_1\) 牵动损失多少，就把这条路径上的局部导数<b>连乘</b>起来。中间量像分数一样<b>逐项抵消</b>，只留下首尾的关系——每个节点只贡献其中一个因子，这正是「本地信息拼出全局梯度」的含义。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">链式法则 · 中间项相消</div>
           <div class="chain" id="chain">
@@ -410,7 +416,7 @@
             <span class="eq">=</span>
             <span class="res">∂L/∂w₁</span>
           </div>
-          <div class="note">划掉的 <b>∂a</b>、<b>∂z</b> 上下相消，只剩 <b>∂L</b> 与 <b>∂w₁</b>。每个因子都是某个节点的局部导数：<code>∂L/∂a</code>（损失节点）、<code>∂a/∂z</code>（σ 节点）、<code>∂z/∂w₁</code>（乘法节点）。</div>
+          <div class="note">划掉的 \(\partial a\)、\(\partial z\) 上下相消，只剩 \(\partial L\) 与 \(\partial w_1\)。每个因子都是某个节点的局部导数：\(\partial L/\partial a\)（损失节点）、\(\partial a/\partial z\)（σ 节点）、\(\partial z/\partial w_1\)（乘法节点）。</div>
         </div>
       </article>
 
@@ -419,7 +425,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">05</span><span class="stage-en">The Backward Pass</span><span class="stage-phase">反向</span></div>
         <h2 class="reveal d1">反向传播：梯度倒流</h2>
-        <p class="desc reveal d1">现在<b>掉头</b>，从右往左走。每个节点收到<b>上游梯度</b>，乘上自己的<b>局部导数</b>，把结果继续往下游送：<br><code>∂L/∂a = 2(a−y) = −0.54</code> → 乘 sigmoid 的导数 <code>a(1−a)=0.197</code> → 得到枢纽量 <b><code>δ = ∂L/∂z = −0.11</code></b>。<br><code>δ</code> 再分配给参数：<code>∂L/∂w₁ = δ·x₁ = −0.21</code>、<code>∂L/∂w₂ = δ·x₂ = −0.32</code>、<code>∂L/∂b = δ = −0.11</code>。梯度，就这样从损失一路<b>倒流</b>回了每个旋钮。</p>
+        <p class="desc reveal d1">现在<b>掉头</b>，从右往左走。每个节点收到<b>上游梯度</b>，乘上自己的<b>局部导数</b>，把结果继续往下游送：<br>\(\partial L/\partial a = 2(a-y) = -0.54\) → 乘 sigmoid 的导数 \(a(1-a)=0.197\) → 得到枢纽量 <b>\(\delta = \partial L/\partial z = -0.11\)</b>。<br>\(\delta\) 再分配给参数：\(\partial L/\partial w_1 = \delta\cdot x_1 = -0.21\)、\(\partial L/\partial w_2 = \delta\cdot x_2 = -0.32\)、\(\partial L/\partial b = \delta = -0.11\)。梯度，就这样从损失一路<b>倒流</b>回了每个旋钮。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">反向传播 · 梯度从右倒流回左</div>
           <div class="gwrap"><div id="graphBwd"></div></div>
@@ -437,7 +443,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">06</span><span class="stage-en">How Gates Route Gradient</span><span class="stage-phase key">路由</span></div>
         <h2 class="reveal d1">加法门与乘法门</h2>
-        <p class="desc reveal d1">倒流时，两类门的行为可以一眼记死——<br>• <b>加法门</b>：局部导数全是 1，于是它把上游梯度<b>原样分发</b>给每条输入边，这就是 <code>∂L/∂b = δ</code> 的由来。<br>• <b>乘法门</b>：局部导数是<b>对方</b>的输入值，于是梯度按 <code>δ·(另一个输入)</code> 路由——两个输入在反向时<b>交换</b>了位置，这正是 <code>∂L/∂w₁ = δ·x₁</code> 的来历。</p>
+        <p class="desc reveal d1">倒流时，两类门的行为可以一眼记死——<br>• <b>加法门</b>：局部导数全是 1，于是它把上游梯度<b>原样分发</b>给每条输入边，这就是 \(\partial L/\partial b = \delta\) 的由来。<br>• <b>乘法门</b>：局部导数是<b>对方</b>的输入值，于是梯度按 \(\delta\times\)（另一个输入）路由——两个输入在反向时<b>交换</b>了位置，这正是 \(\partial L/\partial w_1 = \delta\cdot x_1\) 的来历。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">两种门 · 梯度的路由规则</div>
           <div class="gates">
@@ -487,7 +493,7 @@
                   <marker id="mkM2" markerWidth="8" markerHeight="8" refX="5" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--sage)"/></marker>
                 </defs>
               </svg>
-              <div class="gnote">局部导数是<b>对方</b>的值：流向 <code>w₁</code> 的梯度是 <code>δ·x₁</code>，流向 <code>x₁</code> 的是 <code>δ·w₁</code>——输入交换了位置。</div>
+              <div class="gnote">局部导数是<b>对方</b>的值：流向 \(w_1\) 的梯度是 \(\delta\cdot x_1\)，流向 \(x_1\) 的是 \(\delta\cdot w_1\)——输入交换了位置。</div>
             </div>
           </div>
         </div>
@@ -498,7 +504,7 @@
         <span class="node"></span>
         <div class="stage-head reveal"><span class="stage-no">07</span><span class="stage-en">The Update Step</span><span class="stage-phase">更新</span></div>
         <h2 class="reveal d1">更新参数：沿梯度下坡</h2>
-        <p class="desc reveal d1">拿到每个参数的梯度，就走一步<b>梯度下降</b>（gradient descent）：<code>θ ← θ − η·∂L/∂θ</code>，<code>η</code> 是学习率，这里取 1。<br>再前向跑一遍，损失从 <b>0.072 掉到 0.006</b>——一步就明显下坡。整个训练，不过是这套「前向 → 反向 → 更新」循环，跑上几百万次。</p>
+        <p class="desc reveal d1">拿到每个参数的梯度，就走一步<b>梯度下降</b>（gradient descent）：\[\theta \leftarrow \theta - \eta\cdot\frac{\partial L}{\partial\theta}\]\(\eta\) 是学习率，这里取 1。再前向跑一遍，损失从 <b>0.072 掉到 0.006</b>——一步就明显下坡。整个训练，不过是这套「前向 → 反向 → 更新」循环，跑上几百万次。</p>
         <div class="viz reveal d2">
           <div class="viz-cap">一步更新 · 损失沿梯度下坡</div>
           <div class="upd">
@@ -514,7 +520,7 @@
             <path class="lc-path draw" d="M30 24 Q 260 264 490 24"/>
             <circle class="lc-ball" id="ball6" cx="126" cy="98" r="7"/>
           </svg>
-          <div class="note">学习率 <b>η</b> 控制步长：太小学得慢，太大可能冲过谷底来回震荡。真实训练里 AdamW 等优化器会自适应地给每个参数定制步长。</div>
+          <div class="note">学习率 \(\eta\) 控制步长：太小学得慢，太大可能冲过谷底来回震荡。真实训练里 AdamW 等优化器会自适应地给每个参数定制步长。</div>
         </div>
       </article>
 
@@ -602,8 +608,14 @@
     railBtns.forEach((b,i)=>{ b.classList.toggle('active',i===current); b.classList.toggle('done',i<current); });
   }
 
+  // scroll-driven reveal: replay each stage's effect on every enter, reset on leave
   const revealObserver=new IntersectionObserver((entries)=>{
-    entries.forEach(e=>{ if(e.isIntersecting && !e.target.classList.contains('in')){ e.target.classList.add('in'); runStageEffect(stages.indexOf(e.target)); } });
+    entries.forEach(e=>{
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){ e.target.classList.add('in'); resetStageEffect(idx); runStageEffect(idx); }
+      } else if(e.target.classList.contains('in')){ e.target.classList.remove('in'); resetStageEffect(idx); }
+    });
   },{threshold:0,rootMargin:'0px 0px -20% 0px'});
   stages.forEach(s=>revealObserver.observe(s));
 
@@ -635,9 +647,8 @@
 
   replayBtn.addEventListener('click',()=>{
     stopAuto();
-    stages.forEach(s=>s.classList.remove('in'));
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
     finale.classList.remove('show');
-    fwdDone=bwdDone=false;
     current=-1; updateProgress();
     window.scrollTo({top:0,behavior:'smooth'});
   });
@@ -695,12 +706,26 @@
   function flow(svg,key,cls){const e=svg.querySelector('.gedge[data-edge="'+key+'"]');if(!e)return;e.style.strokeDashoffset=0;e.classList.add(cls);}
 
   const reduce=window.matchMedia('(prefers-reduced-motion:reduce)').matches;
-  let graphFwd, graphBwd, fwdDone=false, bwdDone=false;
+
+  // ── replayable engine: cancel a stage's pending timers on reset ──
+  const timers={}, rafs={};
+  function clearStage(i){ (timers[i]||[]).forEach(clearTimeout); timers[i]=[]; (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[]; }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+
+  let graphFwd, graphBwd;
   graphFwd=buildGraph(document.getElementById('graphFwd'),'fwd');
   graphBwd=buildGraph(document.getElementById('graphBwd'),'bwd');
+  const FWDIDS=['x1','w1','x2','w2','b','m1','m2','add','sig','loss'];
+  const BGRAD={loss:'1',sig:'-0.54',add:'-0.11',m1:'-0.11',m2:'-0.11',b:'-0.11',w1:'-0.21',w2:'-0.32',x1:'+0.11',x2:'-0.21'};
 
-  function animateForward(){
-    if(fwdDone) return; fwdDone=true;
+  // forward graph — start (cleared) / final (every value + drawn edges)
+  function fwdStart(){
+    graphFwd.querySelectorAll('.gnode').forEach(g=>{ g.classList.remove('lit'); const v=g.querySelector('[data-slot="val"]'); v.textContent=''; v.classList.remove('show'); });
+    graphFwd.querySelectorAll('.gedge').forEach(e=>{ e.style.strokeDashoffset=e.style.strokeDasharray; e.classList.remove('fwd'); });
+  }
+  function fwdFinal(){ FWDIDS.forEach(id=>showVal(graphFwd,id)); EDGES.forEach(([a,bk])=>flow(graphFwd,a+'-'+bk,'fwd')); }
+  function animateForward(i){
+    fwdStart();
     const seq=[
       ()=>['x1','w1','x2','w2','b'].forEach(id=>showVal(graphFwd,id)),
       ()=>{['x1-m1','w1-m1','x2-m2','w2-m2'].forEach(k=>flow(graphFwd,k,'fwd'));},
@@ -712,25 +737,33 @@
       ()=>flow(graphFwd,'sig-loss','fwd'),
       ()=>showVal(graphFwd,'loss')
     ];
-    if(reduce){seq.forEach(fn=>fn());return;}
-    seq.forEach((fn,i)=>setTimeout(fn,250+i*620));
+    seq.forEach((fn,k)=>later(i,fn,250+k*620));
   }
-  function animateBackward(){
-    if(bwdDone) return; bwdDone=true;
-    const grads={loss:'1',sig:'-0.54',add:'-0.11',m1:'-0.11',m2:'-0.11',b:'-0.11',w1:'-0.21',w2:'-0.32',x1:'+0.11',x2:'-0.21'};
+
+  // backward graph — start (grads hidden) / final (every gradient + lit edges)
+  function bwdStart(){
+    graphBwd.querySelectorAll('.gnode').forEach(g=>{ g.classList.remove('litb','pulse'); const gr=g.querySelector('[data-slot="grad"]'); gr.textContent=''; gr.classList.remove('show'); });
+    graphBwd.querySelectorAll('.gedge').forEach(e=>{ e.style.strokeDashoffset=0; e.classList.remove('bwd'); });
+  }
+  function bwdFinal(){
+    showGrad(graphBwd,'loss',BGRAD.loss); showGrad(graphBwd,'sig','δa '+BGRAD.sig); showGrad(graphBwd,'add','δ='+BGRAD.add);
+    ['m1','m2','b','w1','w2','x1','x2'].forEach(id=>showGrad(graphBwd,id,BGRAD[id]));
+    EDGES.forEach(([a,bk])=>flow(graphBwd,a+'-'+bk,'bwd'));
+  }
+  function animateBackward(i){
+    bwdStart();
     const seq=[
-      ()=>showGrad(graphBwd,'loss',grads.loss),
+      ()=>showGrad(graphBwd,'loss',BGRAD.loss),
       ()=>flow(graphBwd,'sig-loss','bwd'),
-      ()=>showGrad(graphBwd,'sig','δa '+grads.sig),
+      ()=>showGrad(graphBwd,'sig','δa '+BGRAD.sig),
       ()=>flow(graphBwd,'add-sig','bwd'),
-      ()=>showGrad(graphBwd,'add','δ='+grads.add),
+      ()=>showGrad(graphBwd,'add','δ='+BGRAD.add),
       ()=>{['m1-add','m2-add','b-add'].forEach(k=>flow(graphBwd,k,'bwd'));},
-      ()=>{showGrad(graphBwd,'m1',grads.m1);showGrad(graphBwd,'m2',grads.m2);showGrad(graphBwd,'b',grads.b);},
+      ()=>{showGrad(graphBwd,'m1',BGRAD.m1);showGrad(graphBwd,'m2',BGRAD.m2);showGrad(graphBwd,'b',BGRAD.b);},
       ()=>{['x1-m1','w1-m1','x2-m2','w2-m2'].forEach(k=>flow(graphBwd,k,'bwd'));},
-      ()=>{showGrad(graphBwd,'w1',grads.w1);showGrad(graphBwd,'w2',grads.w2);showGrad(graphBwd,'x1',grads.x1);showGrad(graphBwd,'x2',grads.x2);}
+      ()=>{showGrad(graphBwd,'w1',BGRAD.w1);showGrad(graphBwd,'w2',BGRAD.w2);showGrad(graphBwd,'x1',BGRAD.x1);showGrad(graphBwd,'x2',BGRAD.x2);}
     ];
-    if(reduce){seq.forEach(fn=>fn());return;}
-    seq.forEach((fn,i)=>setTimeout(fn,250+i*640));
+    seq.forEach((fn,k)=>later(i,fn,250+k*640));
   }
 
   /* ═══════════ reverse-mode race (stage 7) ═══════════ */
@@ -738,15 +771,13 @@
   const TOTAL=24;
   for(let i=0;i<TOTAL;i++){const d=document.createElement('span');d.className='d';numDots.appendChild(d);}
   for(let i=0;i<TOTAL;i++){const d=document.createElement('span');d.className='d';bpDots.appendChild(d);}
-  let raceDone=false;
-  function animateRace(){
-    if(raceDone) return; raceDone=true;
+  function raceStart(){ Array.from(numDots.children).forEach(d=>d.classList.remove('on')); Array.from(bpDots.children).forEach(d=>d.classList.remove('on')); numCount.textContent='0'; }
+  function raceFinal(){ Array.from(numDots.children).forEach(d=>d.classList.add('on')); Array.from(bpDots.children).forEach(d=>d.classList.add('on')); numCount.textContent=TOTAL; }
+  function animateRace(i){
+    raceStart();
     const nd=Array.from(numDots.children), bd=Array.from(bpDots.children);
-    if(reduce){nd.forEach(d=>d.classList.add('on'));bd.forEach(d=>d.classList.add('on'));numCount.textContent=TOTAL;return;}
-    // numeric: one slow pass per parameter
-    nd.forEach((d,i)=>setTimeout(()=>{d.classList.add('on');numCount.textContent=i+1;},300+i*160));
-    // backprop: a single quick sweep lights everything
-    bd.forEach((d,i)=>setTimeout(()=>d.classList.add('on'),300+i*22));
+    nd.forEach((d,k)=>later(i,()=>{d.classList.add('on');numCount.textContent=k+1;},300+k*160)); // numeric: slow, one pass per parameter
+    bd.forEach((d,k)=>later(i,()=>d.classList.add('on'),300+k*22));                                 // backprop: a single quick sweep
   }
 
   /* ═══════════ vanishing gradients (stage 8) ═══════════ */
@@ -759,51 +790,71 @@
     vbars.appendChild(bar);
   });
   const vBarEls=Array.from(vbars.children);
-  let reluOn=false, vanishShown=false;
-  function paintVanish(){
-    const data=reluOn?RELU:SIG;
-    vBarEls.forEach((bar,i)=>{
-      bar.classList.toggle('relu',reluOn);
-      const fill=bar.querySelector('.fill'), val=bar.querySelector('[data-v]');
-      setTimeout(()=>{ fill.style.height=data[i]+'%'; }, reduce?0:i*120);
-      val.textContent=data[i]>=1?Math.round(data[i])/100:data[i]/100;
-    });
+  let reluOn=false;
+  function vData(){ return reluOn?RELU:SIG; }
+  function paintVanishVals(){ const data=vData(); vBarEls.forEach((bar,k)=>{ bar.classList.toggle('relu',reluOn); const v=bar.querySelector('[data-v]'); v.textContent=data[k]>=1?Math.round(data[k])/100:data[k]/100; }); }
+  function vanishFinal(){ paintVanishVals(); const data=vData(); vBarEls.forEach((bar,k)=>{ bar.querySelector('.fill').style.height=data[k]+'%'; }); }
+  function animateVanish(i){
+    paintVanishVals();
+    const data=vData();
+    vBarEls.forEach((bar,k)=>{ bar.querySelector('.fill').style.height='0'; later(i,()=>{ bar.querySelector('.fill').style.height=data[k]+'%'; }, k*120); });
   }
-  function animateVanish(){ if(vanishShown)return; vanishShown=true; paintVanish(); }
   reluBtn.addEventListener('click',()=>{
     reluOn=!reluOn;
     reluBtn.classList.toggle('on',reluOn);
     reluBtn.textContent=reluOn?'▶ 换回 Sigmoid':'▶ 换成 ReLU + 残差连接';
-    paintVanish();
+    vanishFinal();
   });
 
   /* ═══════════ chain rule (stage 3) ═══════════ */
-  function animateChain(){
-    const chain=document.getElementById('chain');
-    chain.classList.add('go');
-    if(!reduce){ chain.querySelectorAll('.frac .can.struck').forEach(c=>{ const f=c.closest('.frac'); }); }
-    // fade the fully-cancelled middle fraction after the strike plays
-    setTimeout(()=>{ const fracs=chain.querySelectorAll('.frac'); if(fracs[2]) fracs[2].classList.add('gone'); }, reduce?0:900);
+  function chainEl(){ return document.getElementById('chain'); }
+  function chainStart(){ const c=chainEl(); c.classList.remove('go'); const f=c.querySelectorAll('.frac'); if(f[2]) f[2].classList.remove('gone'); }
+  function chainFinal(){ const c=chainEl(); c.classList.add('go'); const f=c.querySelectorAll('.frac'); if(f[2]) f[2].classList.add('gone'); }
+  function animateChain(i){
+    chainStart();
+    later(i,()=>chainEl().classList.add('go'),60);                                  // play the strike-throughs
+    later(i,()=>{ const f=chainEl().querySelectorAll('.frac'); if(f[2]) f[2].classList.add('gone'); },960); // fade the cancelled fraction
   }
 
   /* ═══════════ loss-curve ball slide (stage 6) ═══════════ */
-  function animateUpdateCurve(){
-    const ball=document.getElementById('ball6');
-    if(!ball) return;
-    // slide from (126,98) toward the valley vertex (~260,150)
-    if(reduce){ ball.setAttribute('transform','translate(134,52)'); return; }
-    setTimeout(()=>ball.setAttribute('transform','translate(134,52)'),700);
+  function ballEl(){ return document.getElementById('ball6'); }
+  function ballStart(){ const b=ballEl(); if(b) b.removeAttribute('transform'); }
+  function ballFinal(){ const b=ballEl(); if(b) b.setAttribute('transform','translate(134,52)'); }
+  function animateUpdateCurve(i){ ballStart(); later(i,ballFinal,700); } // slide toward the valley
+
+  /* ═══════════ per-stage effects (fire on every scroll-in, 0-based) ═══════════ */
+  function runStageEffect(i){
+    if(reduce) return;                  // resetStageEffect already shows the final state
+    if(i===2) animateForward(i);
+    if(i===3) animateChain(i);
+    if(i===4) animateBackward(i);
+    if(i===6) animateUpdateCurve(i);
+    if(i===7) animateRace(i);
+    if(i===8) animateVanish(i);
+  }
+  /* ═══════════ per-stage reset = cancel + final static state (also the reduced-motion fallback) ═══════════ */
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===2) fwdFinal();
+    if(i===3) chainFinal();
+    if(i===4) bwdFinal();
+    if(i===6) ballFinal();
+    if(i===7) raceFinal();
+    if(i===8) vanishFinal();
   }
 
-  /* ═══════════ per-stage effects (0-based position) ═══════════ */
-  function runStageEffect(i){
-    if(i===2){ animateForward(); }
-    if(i===3){ animateChain(); }
-    if(i===4){ animateBackward(); }
-    if(i===6){ animateUpdateCurve(); }
-    if(i===7){ animateRace(); }
-    if(i===8){ animateVanish(); }
+  // ── render every formula with KaTeX (loaded via deferred CDN scripts) ──
+  function renderAllMath(){
+    if(!window.renderMathInElement) return;
+    try{
+      renderMathInElement(document.querySelector('main'),{
+        delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+        throwOnError:false, trust:true, strict:false
+      });
+    }catch(e){}
   }
+  if(window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded', renderAllMath);
 
   updateProgress();
 })();

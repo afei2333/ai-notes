@@ -715,13 +715,13 @@
     });
   }
 
-  // reveal each stage (and fire its one-time effect) the moment it scrolls into view
+  // scroll-driven reveal: replay each stage's effect on every enter, reset on leave
   const revealObserver = new IntersectionObserver((entries)=>{
     entries.forEach(e=>{
-      if(e.isIntersecting && !e.target.classList.contains('in')){
-        e.target.classList.add('in');
-        runStageEffect(stages.indexOf(e.target));
-      }
+      const idx=stages.indexOf(e.target);
+      if(e.isIntersecting){
+        if(!e.target.classList.contains('in')){ e.target.classList.add('in'); resetStageEffect(idx); runStageEffect(idx); }
+      } else if(e.target.classList.contains('in')){ e.target.classList.remove('in'); resetStageEffect(idx); }
     });
   }, {threshold:0, rootMargin:'0px 0px -20% 0px'});
   stages.forEach(s=>revealObserver.observe(s));
@@ -770,7 +770,7 @@
 
   replayBtn.addEventListener('click',()=>{
     stopAuto();
-    stages.forEach(s=>s.classList.remove('in'));
+    stages.forEach((s,i)=>{ s.classList.remove('in'); resetStageEffect(i); });
     finale.classList.remove('show');
     current=-1; updateProgress();
     window.scrollTo({top:0,behavior:'smooth'});
@@ -824,47 +824,42 @@
     toks.forEach(t=>{const sp=document.createElement('span');sp.textContent=t;ax.appendChild(sp);});
   })();
 
+  // ── replayable engine: cancel a stage's pending timers on reset ──
+  const reduce=window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const timers={}, rafs={};
+  function clearStage(i){ (timers[i]||[]).forEach(clearTimeout); timers[i]=[]; (rafs[i]||[]).forEach(cancelAnimationFrame); rafs[i]=[]; }
+  function later(i,fn,ms){ (timers[i]=timers[i]||[]).push(setTimeout(fn,ms)); }
+
   // per-stage timed effects
   const promptText='大语言模型是怎么工作的？';
   const answerTokens=['它','先','把','文字','切成','token','，','再','逐个','预测','下一个','词','，','流式','拼成','这段','回答','。'];
+
+  function probsFill(i,scope){ scope.querySelectorAll('.prob .bar i').forEach(el=>{ const w=el.style.getPropertyValue('--w'); el.style.width='0'; later(i,()=>{el.style.width=w;},150); }); }
+  function probsFinal(scope){ scope.querySelectorAll('.prob .bar i').forEach(el=>{ el.style.width=''; }); } // CSS .stage.in fills it to --w
+  function typeText(i,el,txt,sp){ if(!el)return; el.textContent=''; for(let k=1;k<=txt.length;k++){ later(i,()=>{el.textContent=txt.slice(0,k);},k*sp); } }
+  function attnFinal(){ document.querySelectorAll('#attn .c').forEach((c,idx)=>{ const a=0.15+((idx*97)%100)/100*0.8; c.style.background=`rgba(200,100,60,${a.toFixed(2)})`; }); }
+  function animateAttention(i){ document.querySelectorAll('#attn .c').forEach((c,idx)=>{ const v=Math.random(); later(i,()=>{ c.style.background=`rgba(200,100,60,${(0.12+v*0.85).toFixed(2)})`; }, idx*45); }); }
+  function buildStream(opaque){ const out=document.getElementById('outputStream'); if(!out)return null; out.innerHTML=''; answerTokens.forEach(t=>{ const sp=document.createElement('span'); sp.className='tk'; sp.textContent=t; if(opaque) sp.style.opacity='1'; out.appendChild(sp); }); return out; }
+  function streamFinal(){ buildStream(true); }
+  function animateStream(i){ const out=buildStream(false); if(!out)return; Array.from(out.children).forEach((sp,idx)=>later(i,()=>{ sp.style.transition='opacity .4s'; sp.style.opacity='1'; }, idx*150)); }
+  function maskStart(i){ const mb=document.getElementById('maskBlank'); if(!mb)return; mb.textContent='？'; mb.style.color='var(--accent)'; later(i,()=>{ mb.textContent='世界'; },1300); }
+  function maskFinal(){ const mb=document.getElementById('maskBlank'); if(mb){ mb.textContent='世界'; mb.style.color='var(--accent)'; } }
+
   function runStageEffect(i){
-    if(i===4){
-      animateProbs(stages[4]);
-      const mb=document.getElementById('maskBlank');
-      if(mb){ mb.textContent='？'; mb.style.color='var(--accent)'; setTimeout(()=>{ mb.textContent='世界'; },1300); }
-    }
-    if(i===7){ typeText(document.getElementById('promptType'),promptText,55); }
-    if(i===8){ animateAttention(); }
-    if(i===9){ animateProbs(stages[9]); }
-    if(i===10){ streamOutput(); }
+    if(reduce) return;                 // resetStageEffect already shows the final state
+    if(i===4){ probsFill(i,stages[4]); maskStart(i); }
+    if(i===7){ typeText(i,document.getElementById('promptType'),promptText,55); }
+    if(i===8){ animateAttention(i); }
+    if(i===9){ probsFill(i,stages[9]); }
+    if(i===10){ animateStream(i); }
   }
-  function animateProbs(scope){
-    scope.querySelectorAll('.prob .bar i').forEach(el=>{
-      const w=el.style.getPropertyValue('--w');el.style.width='0';
-      setTimeout(()=>{el.style.width=w;},150);
-    });
-  }
-  function typeText(el,txt,sp){
-    el.textContent='';let k=0;
-    (function t(){ if(k<=txt.length){el.textContent=txt.slice(0,k);k++;setTimeout(t,sp);} })();
-  }
-  function animateAttention(){
-    const cells=document.querySelectorAll('#attn .c');
-    cells.forEach((c,idx)=>{
-      const v=Math.random();
-      setTimeout(()=>{
-        const alpha=0.12+v*0.85;
-        c.style.background=`rgba(200,100,60,${alpha.toFixed(2)})`;
-      }, idx*45);
-    });
-  }
-  function streamOutput(){
-    const out=document.getElementById('outputStream');
-    out.innerHTML='';
-    answerTokens.forEach((t,idx)=>{
-      const sp=document.createElement('span');sp.className='tk';sp.textContent=t;out.appendChild(sp);
-      setTimeout(()=>{sp.style.transition='opacity .4s';sp.style.opacity='1';}, idx*150);
-    });
+  function resetStageEffect(i){
+    clearStage(i);
+    if(i===4){ probsFinal(stages[4]); maskFinal(); }
+    if(i===7){ const el=document.getElementById('promptType'); if(el) el.textContent=promptText; }
+    if(i===8){ attnFinal(); }
+    if(i===9){ probsFinal(stages[9]); }
+    if(i===10){ streamFinal(); }
   }
 
   updateProgress();

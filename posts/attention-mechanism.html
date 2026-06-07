@@ -493,7 +493,7 @@
       <!-- 04 · 打分 QKᵀ -->
       <article class="stage" data-phase="打分">
         <span class="node"></span>
-        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Scores = QKᵀ</span><span class="stage-phase key">打分</span></div>
+        <div class="stage-head reveal"><span class="stage-no">04</span><span class="stage-en">Scoring</span><span class="stage-phase key">打分</span></div>
         <h2 class="reveal d1">打分：Query 与 Key 做点积</h2>
         <p class="desc reveal d1">每个词的查询牌 <b>q</b>，去和<b>每一个</b>词的标识牌 <b>k</b> 做<b>点积</b>。点积越大，说明两者越「对得上」。所有点积排成一张 \(n\times n\) 的分数表 \(S = QK^\top\)：第 \(i\) 行第 \(j\) 列，就是「词 \(i\) 该多关注词 \(j\)」。</p>
         <div class="viz reveal d2">
@@ -502,7 +502,7 @@
           <div class="note">点积就是<b>对应位置相乘再相加</b>。3 这个分数，来自 q累 与 k猫 在第 1、第 3 维上的「共振」。</div>
         </div>
         <div class="viz reveal d3">
-          <div class="viz-cap">完整分数矩阵 / S = QKᵀ（3×3）</div>
+          <div class="viz-cap">完整分数矩阵 / S = \(QK^\top\)（3×3）</div>
           <div class="matblock" id="scoreMat"></div>
           <div class="note">高亮的「累」这一行 \([3,\,0,\,2]\)：它最想看「猫」(3)，其次看自己(2)，几乎不理「很」(0)。但这还是<b>原始分数</b>，又大又不规整——下一步先把它驯服。</div>
         </div>
@@ -580,7 +580,7 @@
           <div class="facts">
             <div class="fact"><b>512</b><span>模型维度 d</span></div>
             <div class="fact"><b>8</b><span>注意力头 h</span></div>
-            <div class="fact"><b>64</b><span>每头维度 dₖ</span></div>
+            <div class="fact"><b>64</b><span>每头维度 \(d_k\)</span></div>
             <div class="fact"><b>×N</b><span>逐层重复</span></div>
           </div>
         </div>
@@ -788,7 +788,7 @@
     const total=document.createElement('div');total.className='dottotal';
     total.innerHTML=`q<sub>累</sub> · k<sub>猫</sub> = 1 + 0 + 2 + 0 = <b>3</b>`;
     host.appendChild(total);
-    document.getElementById('scoreMat').appendChild(makeMatrix(S,{name:'S = QKᵀ',dim:'3×3',rowLabels:toks}));
+    document.getElementById('scoreMat').appendChild(makeMatrix(S,{name:'S = \\(QK^\\top\\)',dim:'3×3',rowLabels:toks}));
   })();
   // 05 · scale (just 累 row, before → after)
   (function(){
