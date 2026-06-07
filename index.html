@@ -407,6 +407,30 @@
       dek:'把臃肿的前馈层拆成许多小专家，每个 token 只惊动其中两个——总参数涨十倍，单次算力却几乎不动。从路由打分、Top-2 稀疏激活、负载均衡损失，到共享/细粒度专家与专家并行，连数字一起把 Mixture of Experts 讲清楚。',
       tags:['MoE','混合专家','稀疏激活','架构','路由','负载均衡'],
       meta:['10 节 · 编辑式','交互图 + KaTeX','约 16 分钟']
+    },
+    {
+      no:'09', status:'published', slug:'posts/decoding-strategies.html', featured:false,
+      kicker:'交互长文 · Interactive',
+      title:'采样与解码：模型如何挑下一个词',
+      dek:'模型每一步吐出的不是一个词，而是一整片覆盖十万词表的概率云。把这片云塌缩成一个字，靠的是解码策略——同一个模型，调一下温度、top-p 就能从一丝不苟变得天马行空。跟着一句「今天天气真__」，连 softmax、温度、核采样的数字一起算给你看，再到对比解码与投机解码。',
+      tags:['解码','采样','Temperature','Top-p','Softmax','推理'],
+      meta:['12 幕拆解','滚动叙事','约 13 分钟']
+    },
+    {
+      no:'10', status:'published', slug:'posts/positional-encoding.html', featured:false,
+      kicker:'深度长文 · Interactive',
+      title:'位置编码与 RoPE：注意力如何分清谁先谁后',
+      dek:'自注意力天生分不清词序——「猫追狗」和「狗追猫」在它眼里是同一袋词。从给词向量直接相加一个位置向量（绝对编码、正弦编码），到 RoPE 把 Q、K 按位置旋转一个角度、让点积只依赖相对距离，连数字一起算给你看；再到 θ base、位置插值、NTK、YaRN，讲清它如何撑起今天的长上下文。',
+      tags:['位置编码','RoPE','注意力','相对位置','Transformer','长上下文'],
+      meta:['9 节 · 编辑式','旋转表盘 + KaTeX','约 14 分钟']
+    },
+    {
+      no:'11', status:'published', slug:'posts/alignment-rlhf-dpo.html', featured:false,
+      kicker:'深度长文 · Interactive',
+      title:'对齐：把「我更喜欢」教给模型',
+      dek:'我们写不出「好答案」的损失函数，只能让人来比较：同一问题的两个回答，标一个「更喜欢哪个」。这篇讲清，如何把一摞两两偏好变成模型的梯度——从 reward model 与 Bradley-Terry，到 PPO 的四模型环路、KL 拴绳与 reward hacking，再到 DPO 一步把强化学习消解成一个监督损失；连数字一起算给你看，并讲透 PPO 与 DPO 的取舍，以及 GRPO/RLVR 这条线往哪走。',
+      tags:['对齐','RLHF','DPO','PPO','强化学习','偏好学习'],
+      meta:['8 节 · 编辑式','流程图 + KaTeX 推导','约 20 分钟']
     }
   ];
 

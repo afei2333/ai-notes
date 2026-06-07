@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<!--
+  原理手记 / Field Notes — 位置编码与 RoPE（编辑式长文）
+  Editorial layout: head + topbar + atmosphere from the skeleton; rail/spine/
+  progress/autoplay dropped; plain <section>s of heading + .desc + .viz.
+  All math rendered with KaTeX (CDN trio, deferred).
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>位置编码与 RoPE：注意力如何分清谁先谁后 · 原理手记</title>
+<meta name="description" content="自注意力天生分不清词序——「猫追狗」和「狗追猫」在它眼里是同一袋词。从给词向量直接相加一个位置向量（绝对编码、正弦编码），到 RoPE 把 Q、K 按位置旋转一个角度、让点积只依赖相对距离，连数字一起算给你看，再讲清它如何撑起今天的长上下文。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  .read-bar{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--accent),var(--sage));z-index:60;transition:width .15s linear}
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1000px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:96vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.05;letter-spacing:-0.01em;font-size:clamp(2.5rem,7vw,5.4rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:50ch;margin-top:2.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero-formula{margin-top:2.4rem;padding:1.5rem 1.6rem;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--viz-grad),transparent);overflow-x:auto;opacity:0;animation:rise 1s .62s forwards}
+  .hero-formula .legend{margin-top:1.1rem;display:flex;flex-wrap:wrap;gap:0.4rem 1.4rem;font-family:var(--mono);font-size:0.66rem;color:var(--ink-faint);letter-spacing:0.03em}
+  .hero-formula .legend > span{display:inline-block}
+  .hero-formula .legend i{display:inline-block;font-style:normal;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:0.45rem}
+  .hero-formula .legend .lq i{background:var(--accent)} .hero-formula .legend .lk i{background:var(--sage)} .hero-formula .legend .lv i{background:var(--accent-soft)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:2.8rem;opacity:0;animation:rise 1s .72s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0;font-family:var(--serif)}
+
+  /* ── editorial sections ──────────────────────────────────── */
+  .section{position:relative;padding:clamp(2.8rem,6.5vw,5rem) 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .sec-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .sec-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .section h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.75rem,4.2vw,2.85rem);line-height:1.13;letter-spacing:-0.01em}
+  .desc{max-width:64ch;margin-top:1.2rem;color:var(--ink);font-size:1.1rem;font-weight:400;line-height:1.95}
+  .desc + .desc{margin-top:1rem}
+  .desc b{color:var(--accent-soft);font-weight:500}
+  .desc code,.note code,.hero .meta code{font-family:var(--mono);font-size:0.88em;color:var(--accent-soft);background:var(--chip-bg);padding:0.05em 0.35em;border-radius:0.3em;border:1px solid var(--line)}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.2rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.1rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* ── KaTeX math ──────────────────────────────────────────── */
+  .katex{font-size:1.05em}
+  .desc .katex,.note .katex,.legend .katex,.ctab .katex,.dial-read .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  .formula{margin:1.6rem 0 0.3rem;display:flex;justify-content:center;overflow-x:auto;padding:0.3rem 0}
+  .formula .katex-display{margin:0}
+  .formula .katex-display>.katex{white-space:normal}
+
+  /* ── reveal ──────────────────────────────────────────────── */
+  .reveal{opacity:0;transform:translateY(24px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.1s}.reveal.d2{transition-delay:.22s}.reveal.d3{transition-delay:.34s}
+  .in .reveal{opacity:1;transform:none}
+
+  /* ── reused library: facts / chips / steps / learns ──────── */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.8rem;margin-top:1.6rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.4rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.05em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:0.4rem}
+  .chip{font-family:var(--mono);font-size:0.82rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.95rem;background:var(--chip-bg)}
+  .chip.hot{color:var(--accent);border-color:rgba(200,100,60,0.45)}
+  .chip.cool{color:var(--sage);border-color:rgba(127,145,131,0.45)}
+  .steps{display:flex;flex-direction:column;gap:0;margin-top:0.5rem}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.6rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.66rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);min-width:44px;padding:0 0.4rem;height:27px;border-radius:14px;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.68rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc > span{display:block;color:var(--ink-dim);font-size:0.94rem;margin-top:0.25rem;line-height:1.75}
+  .step:not(:last-child)::before{content:"";position:absolute;left:21px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+  .learns{display:flex;flex-wrap:wrap;gap:0.55rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.9rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);max-width:46ch}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.5rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.04em}
+
+  /* ── §1 permutation demo ─────────────────────────────────── */
+  .perm{display:grid;grid-template-columns:1fr;gap:1.1rem}
+  .perm-row{display:flex;align-items:center;gap:0.9rem;flex-wrap:wrap}
+  .perm-lab{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-faint);width:96px;flex:none}
+  .tok{font-family:var(--serif);font-size:1.25rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.55rem;padding:0.4rem 1rem;background:var(--chip-bg);transition:transform .5s cubic-bezier(.16,1,.3,1),border-color .4s}
+  .tok.bag{color:var(--sage);border-color:rgba(127,145,131,0.4)}
+  .perm-btn{margin-top:0.3rem;cursor:pointer;background:none;border:1px solid var(--line-strong);color:var(--ink-dim);font-family:var(--mono);font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;padding:0.6rem 1.2rem;border-radius:1.4rem;transition:all .4s}
+  .perm-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ── §2 sinusoidal heatmap ───────────────────────────────── */
+  .peheat-wrap{overflow-x:auto}
+  .peheat{display:grid;gap:3px;width:max-content}
+  .pe-cell{width:30px;height:26px;border-radius:3px;background:var(--line-strong)}
+  .pe-axis{font-family:var(--mono);font-size:0.58rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .pe-legend{display:flex;align-items:center;gap:0.6rem;margin-top:1rem;font-family:var(--mono);font-size:0.62rem;color:var(--ink-faint);flex-wrap:wrap}
+  .pe-bar{height:10px;width:130px;border-radius:5px;background:linear-gradient(90deg,rgba(127,145,131,0.85),rgba(127,145,131,0.18),rgba(200,100,60,0.18),rgba(200,100,60,0.9))}
+
+  /* ── §5 rotation dial ────────────────────────────────────── */
+  .dial-wrap{display:grid;grid-template-columns:auto 1fr;gap:1.6rem 2rem;align-items:center}
+  @media(max-width:640px){.dial-wrap{grid-template-columns:1fr;justify-items:center}}
+  .dial svg{width:230px;height:230px;display:block}
+  .dial-ctrl{display:flex;flex-direction:column;gap:1.1rem;min-width:0;width:100%}
+  .slab{display:flex;align-items:center;gap:0.9rem;font-family:var(--mono);font-size:0.78rem;color:var(--ink-dim)}
+  .slab .nm{width:118px;flex:none}
+  .slab .nm b{color:var(--accent);font-weight:500}
+  .slab .nm.k b{color:var(--sage)}
+  .slab input[type=range]{flex:1;accent-color:var(--accent);cursor:pointer;min-width:80px}
+  .slab.k input[type=range]{accent-color:var(--sage)}
+  .dial-read{font-family:var(--mono);font-size:0.86rem;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:0.9rem 1rem;background:var(--chip-bg);line-height:1.9}
+  .dial-read .sv{color:var(--accent-soft);font-weight:500}
+  .shift-btn{cursor:pointer;align-self:flex-start;background:none;border:1px solid var(--line-strong);color:var(--ink-dim);font-family:var(--mono);font-size:0.66rem;letter-spacing:0.1em;text-transform:uppercase;padding:0.55rem 1.1rem;border-radius:1.4rem;transition:all .4s}
+  .shift-btn:hover{border-color:var(--sage);color:var(--sage)}
+  .ctab{display:grid;grid-template-columns:repeat(5,1fr);gap:0.5rem;margin-top:1.6rem}
+  .ctab .cc{border:1px solid var(--line);border-radius:8px;padding:0.7rem 0.4rem;text-align:center;background:var(--chip-bg)}
+  .ctab .cc .o{font-family:var(--mono);font-size:0.6rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.06em}
+  .ctab .cc .v{font-family:var(--serif);font-size:1.15rem;margin-top:0.35rem;color:var(--accent-soft)}
+
+  /* ── §6 frequency ladder + decay curve ───────────────────── */
+  .svgbox{width:100%;overflow-x:auto}
+  .svgbox svg{display:block;width:100%;height:auto;min-width:460px}
+  .wave-lab{font-family:var(--mono);font-size:0.6rem;fill:var(--ink-faint);letter-spacing:0.04em}
+  .axis-line{stroke:var(--line-strong);stroke-width:1}
+  .axis-dash{stroke:var(--line-strong);stroke-width:1;stroke-dasharray:3 4}
+  .axis-txt{font-family:var(--mono);font-size:0.58rem;fill:var(--ink-faint)}
+
+  /* ── §9 context ruler ────────────────────────────────────── */
+  .ruler-ctrl{display:flex;align-items:center;gap:0.9rem;margin-bottom:1.3rem;font-family:var(--mono);font-size:0.78rem;color:var(--ink-dim);flex-wrap:wrap}
+  .ruler-ctrl input[type=range]{flex:1;accent-color:var(--accent);cursor:pointer;min-width:120px}
+  .ruler-ctrl b{color:var(--accent-soft);font-weight:500}
+  .ruler{position:relative;height:60px;border:1px solid var(--line);border-radius:8px;background:var(--box-bg);overflow:hidden}
+  .ruler .trained{position:absolute;top:0;bottom:0;left:0;background:rgba(200,100,60,0.12);border-right:1px dashed var(--accent)}
+  .ruler .tick{position:absolute;top:50%;width:2px;height:14px;margin-top:-7px;background:var(--sage);border-radius:1px;transition:left .5s cubic-bezier(.16,1,.3,1)}
+  .ruler .tlabel{position:absolute;top:6px;left:8px;font-family:var(--mono);font-size:0.56rem;color:var(--accent);letter-spacing:0.06em}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:34ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.hero .kicker,.hero h1 .l,.hero .sub,.hero-formula,.hero .meta{opacity:1!important}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+  <div class="read-bar" id="readBar"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">位置编码 · <b>RoPE</b></div>
+    </div>
+    <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <div class="kicker">原理手记 · 位置编码与 RoPE</div>
+      <h1>
+        <span class="l">注意力分不清</span>
+        <span class="l">谁<em>先</em>谁<em>后</em>。</span>
+      </h1>
+      <p class="sub">自注意力天生是「一袋词」——<code>猫追狗</code> 和 <code>狗追猫</code> 在它眼里一模一样。要让模型懂顺序，得亲手把位置喂进去。从最直白的「<b>把位置加进向量</b>」，到 RoPE 改成「<b>把 Q、K 按位置旋转</b>」——一个旋转，就把绝对位置悄悄变成了相对距离。</p>
+      <div class="hero-formula">
+        <div class="formula" id="heroFormula"></div>
+        <div class="legend">
+          <span class="lq"><i></i>\(R(m\theta)\)：query 转了 \(m\theta\)（绝对位置 \(m\)）</span>
+          <span class="lk"><i></i>\(R(n\theta)\)：key 转了 \(n\theta\)（绝对位置 \(n\)）</span>
+          <span class="lv"><i></i>点积里只剩 \(n-m\)：相对位置</span>
+        </div>
+      </div>
+      <div class="meta">
+        <div><b>0</b>学习的位置参数</div>
+        <div><b>每一层</b>Q/K 都重新旋转</div>
+        <div><b>128k+</b>它撑起的上下文</div>
+      </div>
+    </section>
+
+    <!-- 01 -->
+    <section class="section" id="s1">
+      <div class="sec-head reveal"><span class="sec-no">01</span><span class="sec-en">The Blind Spot · Permutation Invariance</span></div>
+      <h2 class="reveal d1">注意力为什么分不清顺序</h2>
+      <p class="desc reveal d1">回忆一次 self-attention：token <em>i</em> 的输出，是它的 query 和所有 key 两两点积、过 <code>softmax</code>、再去加权求和 value——写成 \(\;\text{out}_i=\sum_j \text{softmax}_j(q_i\cdot k_j)\,v_j\)。盯着这条式子看：<b>没有任何一处用到「这个词排第几」</b>。</p>
+      <p class="desc reveal d1">于是一旦把输入词序打乱，\(q_i,k_j,v_j\) 只是跟着一起搬家，任意一对的分数纹丝不动——这套运算是<b>置换等变</b>（permutation-equivariant）的，天生不含位置。RNN 靠递归一步步走、CNN 靠卷积窗的位置，顺序是结构自带的；Transformer 为了能<b>并行</b>抛弃了递归，顺便也把顺序丢了。只能手动补回来。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · 打乱词序，注意力眼中还是同一袋词</div>
+        <div class="perm">
+          <div class="perm-row"><span class="perm-lab">输入顺序</span><span id="permTokens"></span></div>
+          <div class="perm-row"><span class="perm-lab">注意力眼中</span><span class="tok bag">猫</span><span class="tok bag">追</span><span class="tok bag">狗</span><span style="font-family:var(--mono);font-size:0.7rem;color:var(--ink-faint);margin-left:.4rem">＝同一个集合</span></div>
+        </div>
+        <button class="perm-btn" id="permBtn">↺ 打乱顺序</button>
+        <div class="note">输入怎么排，上面那行就怎么动；可下面这袋词——以及它们两两之间的注意力分数集合——<b>一字不差</b>。「猫追狗」与「狗追猫」对它是同一道题。位置，必须由我们注入。</div>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section class="section" id="s2">
+      <div class="sec-head reveal"><span class="sec-no">02</span><span class="sec-en">First Instinct · Absolute Encoding</span></div>
+      <h2 class="reveal d1">第一感：把位置加进去</h2>
+      <p class="desc reveal d1">最直白的修法——给每个位置一个向量 \(p_{\text{pos}}\)，加到词嵌入上：\(\;x_i=\text{embed}(w_i)+p_{\text{pos}}(i)\)。这样第一层拿到的向量里，就带上了「我在第 \(i\) 位」。两种主流做法：</p>
+      <p class="desc reveal d1"><b>可学习的绝对编码</b>（BERT、GPT-2）：一张 \([\,L_{\max},\,d\,]\) 的查找表，像普通嵌入一样训出来。简单好用，但有硬天花板——训练到 1024 位，第 1025 位<b>根本没有向量、从没见过</b>，不能外推；还白占参数；而且它编的是绝对序号，可语言常常只在乎相对偏移。</p>
+      <p class="desc reveal d1"><b>正弦编码</b>（原版 Transformer，无参数）：每一维是不同频率的正弦/余弦——\(\;PE(pos,2i)=\sin\!\big(pos/10000^{2i/d}\big)\)，\(\;PE(pos,2i{+}1)=\cos\!\big(pos/10000^{2i/d}\big)\)。像一排转速按几何级数排开的时钟指针，合起来给每个位置一个独一无二的指纹。妙处在于 \(\sin/\cos\) 的和角公式让 \(pos{+}k\) 的编码是 \(pos\) 的一个固定线性变换，模型<b>理论上能</b>读出相对偏移；又因为是公式，能算到没见过的位置。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">正弦位置编码 · 行＝位置 0–15，列＝维度（左快右慢）</div>
+        <div class="peheat-wrap">
+          <div class="peheat" id="peGrid"></div>
+        </div>
+        <div class="pe-legend"><span>−1</span><span class="pe-bar"></span><span>+1</span><span style="margin-left:.6rem">左侧维度高频（相邻行就变色），右侧维度低频（跨很多行才缓缓变化）</span></div>
+        <div class="note">两种做法有个<b>共同硬伤</b>：位置只在输入处<b>加一次</b>，立刻和内容缠进同一个向量。点积 \(q_i\cdot k_j\) 里混着「内容×内容、内容×位置、位置×位置」各项，相对位置的信号有，却<b>间接、易被冲淡</b>。我们想要更干净的东西。</div>
+      </div>
+      <div class="learns reveal d2" style="margin-top:1.6rem">
+        <span class="learn"><i>可学习</i>查表，简单，但有长度上限、不能外推</span>
+        <span class="learn"><i>正弦</i>无参数、按公式、可外推到更长</span>
+        <span class="learn"><i>共同硬伤</i>只在输入加一次，与内容纠缠</span>
+      </div>
+    </section>
+
+    <!-- 03 -->
+    <section class="section" id="s3">
+      <div class="sec-head reveal"><span class="sec-no">03</span><span class="sec-en">What We Want · Relative Position</span></div>
+      <h2 class="reveal d1">我们真正想要的：相对位置</h2>
+      <p class="desc reveal d1">把目标写死。位置 \(m\) 的 query 与位置 \(n\) 的 key 之间的分数，应当只依赖它俩的<b>内容</b>和<b>相对距离</b> \(m-n\)，而不分别依赖 \(m\)、\(n\)。「the cat」这对搭配，在句首 \((2,3)\) 和在千字之后 \((102,103)\)，绑定方式应当一样。形式上，我们要一个函数 \(g\)，使得</p>
+      <div class="formula reveal d1">\[ \langle q_m,\,k_n\rangle = g\big(q,\,k,\;\htmlClass{m-v}{m-n}\big) \]</div>
+      <p class="desc reveal d2">相对位置流派都在直接追这个目标：Shaw 等人 2018 给注意力加相对位置项；T5 干脆给每个分数按距离桶加一个学到的标量偏置 \(b_{m-n}\)；Transformer-XL 改写了分数展开式。都有效——但都是<b>外挂的加性补丁</b>，往往逐层去学，且不易优雅地外推。</p>
+      <p class="desc reveal d2">RoPE 的问题更尖锐：能不能<b>不加任何偏置、不学一个位置参数</b>，纯靠变换 \(q\)、\(k\) 自己，就精确拿到这条相对距离性质？</p>
+    </section>
+
+    <!-- 04 -->
+    <section class="section" id="s4">
+      <div class="sec-head reveal"><span class="sec-no">04</span><span class="sec-en">The Trick · Rotate, Don't Add</span></div>
+      <h2 class="reveal d1">核心戏法：旋转，而不是相加</h2>
+      <p class="desc reveal d1">RoPE 的洞见一句话：<b>不「加」位置向量，而是把每个 query / key 按它的位置「旋转」一个角度</b>。神奇之处在于——旋转之后两个向量的点积，<b>只依赖它们旋转角之差</b>，也就是相对位置。</p>
+      <p class="desc reveal d1">先看二维。把一个二维向量看成平面上的点，旋转角 \(\alpha\) 就是乘上旋转矩阵 \(R(\alpha)=\left(\begin{smallmatrix}\cos\alpha & -\sin\alpha\\ \sin\alpha & \cos\alpha\end{smallmatrix}\right)\)。让 query 在位置 \(m\) 转 \(m\theta\)、key 在位置 \(n\) 转 \(n\theta\)，再做点积，只用两条小学过的性质——\(R(\alpha)^{\top}=R(-\alpha)\) 和 \(R(a)R(b)=R(a{+}b)\)——位置就坍缩了：</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">四步代数 · 看 m、n 如何坍缩成 n − m</div>
+        <div class="steps">
+          <div class="step"><span class="si">起点</span><span class="sc"><b>分别旋转</b><span>\(q_m=R(m\theta)\,q\)，\(k_n=R(n\theta)\,k\)——各自带上自己的绝对位置。</span></span></div>
+          <div class="step"><span class="si">展开</span><span class="sc"><b>写出点积</b><span>\(\;q_m\cdot k_n=\big(R(m\theta)q\big)^{\top}\big(R(n\theta)k\big)=q^{\top}R(m\theta)^{\top}R(n\theta)\,k\)</span></span></div>
+          <div class="step"><span class="si">合并</span><span class="sc"><b>转置即反向、连乘即相加</b><span>\(\;R(m\theta)^{\top}R(n\theta)=R(-m\theta)R(n\theta)=R\big((n-m)\theta\big)\)</span></span></div>
+          <div class="step"><span class="si">收束</span><span class="sc"><b>只剩相对位置</b><span>\(\;q_m\cdot k_n=q^{\top}R\big(\htmlClass{m-v}{(n-m)}\theta\big)\,k\)——\(m\)、\(n\) 消失，只留下 \(n-m\)。</span></span></div>
+        </div>
+        <div class="note">对各自施加<b>绝对</b>旋转，点积自动变成<b>相对</b>角的函数。这正是上一节要的 \(g(q,k,\,n-m)\)——精确达成，零新增参数、零加性偏置。</div>
+      </div>
+    </section>
+
+    <!-- 05 -->
+    <section class="section" id="s5">
+      <div class="sec-head reveal"><span class="sec-no">05</span><span class="sec-en">By the Numbers · A 2D Walkthrough</span></div>
+      <h2 class="reveal d1">连数字一起算</h2>
+      <p class="desc reveal d1">取一对维度，固定 \(\theta=1\)（每步转 1 弧度），并把 query、key 都设成单位向量 \(q=k=[1,0]\)（方向相同，方便看）。这时它俩的点积就干净地等于 \(\cos\big((n-m)\theta\big)\)。<b>拖动下面两个滑块</b>改变各自的位置，看夹角和得分怎么变；再点「整体平移」，验证只要间隔不变、分数就不变。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · 旋转表盘（红＝query 在位置 m，绿＝key 在位置 n）</div>
+        <div class="dial-wrap">
+          <div class="dial">
+            <svg viewBox="0 0 230 230" id="dialSvg" aria-label="rotation dial">
+              <circle cx="115" cy="115" r="84" fill="none" class="axis-line"/>
+              <line x1="25" y1="115" x2="205" y2="115" class="axis-dash"/>
+              <line x1="115" y1="25" x2="115" y2="205" class="axis-dash"/>
+              <path id="dialArc" d="" fill="rgba(200,100,60,0.14)" stroke="none"/>
+              <line id="vecQ" x1="115" y1="115" x2="199" y2="115" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round"/>
+              <line id="vecK" x1="115" y1="115" x2="199" y2="115" stroke="var(--sage)" stroke-width="2.4" stroke-linecap="round"/>
+              <circle id="dotQ" cx="199" cy="115" r="4.5" fill="var(--accent)"/>
+              <circle id="dotK" cx="199" cy="115" r="4.5" fill="var(--sage)"/>
+              <circle cx="115" cy="115" r="3" fill="var(--ink-faint)"/>
+            </svg>
+          </div>
+          <div class="dial-ctrl">
+            <div class="slab"><span class="nm">query 位置 <b id="mTag">m=2</b></span><input type="range" id="mSlider" min="0" max="8" step="1" value="2"></div>
+            <div class="slab k"><span class="nm k">key 位置 <b id="nTag">n=5</b></span><input type="range" id="nSlider" min="0" max="8" step="1" value="5"></div>
+            <div class="dial-read" id="dialRead"></div>
+            <button class="shift-btn" id="shiftBtn">↗ 整体平移 +1（间隔不变）</button>
+          </div>
+        </div>
+        <div class="ctab" id="cosTab"></div>
+        <div class="note">同样一对 \(q,k\)，<b>无论挪到序列哪里</b>，只要间隔相同、分数就相同——\((m,n)=(2,2)\) 和 \((100,100)\) 都是 \(\cos 0=1\)。单个频率会震荡（上表已见正负交替）；把许多频率叠起来，才得到一条总体衰减的曲线——下一节就升到高维。</div>
+      </div>
+    </section>
+
+    <!-- 06 -->
+    <section class="section" id="s6">
+      <div class="sec-head reveal"><span class="sec-no">06</span><span class="sec-en">Going High-Dim · A Ladder of Frequencies</span></div>
+      <h2 class="reveal d1">升到高维：一架频率的梯子</h2>
+      <p class="desc reveal d1">真实向量是 \(d\) 维（比如每个注意力头 128 维）。RoPE 把这 \(d\) 维切成 \(d/2\) 个相邻的对，每一对用<b>自己的频率</b>旋转：\(\;\theta_i=10000^{-2i/d}\)，\(i=0,1,\dots,d/2-1\)。第 0 对转得最快（\(\theta_0=1\)），最后一对转得极慢。整体就是一个<b>块对角旋转矩阵</b>：对角线上排着 \(d/2\) 个 \(2\times2\) 小旋转块，第 \(i\) 块转 \(m\theta_i\)。和正弦编码同一架几何频率梯子——只是这回拿来<b>旋转</b> \(q,k\)，而非<b>加</b>到 \(x\) 上。</p>
+      <p class="desc reveal d2">为什么要一排频率？高频对转得快，能分辨相邻词的细微先后，但很快绕圈、长距离上就分不清；低频对转得慢，跨越很远仍可区分。合起来，是一把<b>多尺度的尺子</b>——像秒针、分针、时针，各管各的尺度，一起把位置钉死。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">频率梯子 · 同一段距离里，高频转好几圈，低频才走一点</div>
+        <div class="svgbox" id="waveBox"></div>
+      </div>
+      <p class="desc reveal d2">而所有对的点积，是一大堆 \(\cos\big((n-m)\theta_i\big)\) 之和。沿着频率梯子叠加之后，会得到一条<b>随距离整体衰减</b>的交互曲线——离得越远的两个词，天然耦合得越弱。这就是 RoPE 著名的<b>长程衰减</b>（long-term decay），一个相当合理的先验。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">长程衰减 · 把各频率的 cos 叠起来，随相对距离 |n − m| 增大而回落</div>
+        <div class="svgbox" id="decayBox"></div>
+      </div>
+    </section>
+
+    <!-- 07 -->
+    <section class="section" id="s7">
+      <div class="sec-head reveal"><span class="sec-no">07</span><span class="sec-en">In Practice · The Element-wise Form</span></div>
+      <h2 class="reveal d1">实现：不真的去乘那个大矩阵</h2>
+      <p class="desc reveal d1">那个块对角矩阵几乎全是 0，谁也不会真去构造它。真实代码（Llama、GPT-NeoX）用的是逐元素形式：把预存的角度向量 \(\cos(m\Theta)\)、\(\sin(m\Theta)\) 拿来逐元素相乘相加，</p>
+      <div class="formula reveal d1">\[ \text{RoPE}(x,m)=x\odot\cos(m\Theta)\;+\;\text{rotate\_half}(x)\odot\sin(m\Theta) \]</div>
+      <p class="desc reveal d2">其中 \(\odot\) 是逐元素乘，\(\text{rotate\_half}\) 把向量配对后取 \([-x_2,\,x_1]\)——正好和 \(\sin\) 相乘，补齐二维旋转的另一半。展开一对就能验证它<b>恰好等于</b>旋转矩阵：</p>
+      <div class="formula reveal d2">\[ \begin{bmatrix}x_1\cos\theta - x_2\sin\theta\\[2pt] x_1\sin\theta + x_2\cos\theta\end{bmatrix}=R(\theta)\begin{bmatrix}x_1\\ x_2\end{bmatrix}\;\checkmark \]</div>
+      <p class="desc reveal d2">每个 token 不过两次逐元素乘加，开销可忽略。还有三个关键细节常被忽视：RoPE <b>只作用在 Q、K 上</b>（绝不碰 V）；它在<b>每一层注意力里、就在 \(QK^{\top}\) 之前</b>施加，而不是在输入处加一次；并且全程<b>没有一个可学习参数</b>，纯是固定的几何。</p>
+      <div class="facts reveal d2">
+        <div class="fact"><b>Q、K</b><span>只旋转这两个，V 不动</span></div>
+        <div class="fact"><b>每一层</b><span>位置在用到它的地方重注入</span></div>
+        <div class="fact"><b>0 参数</b><span>固定几何，不学习</span></div>
+        <div class="fact"><b>≈2 次乘加</b><span>每 token 的额外开销</span></div>
+      </div>
+    </section>
+
+    <!-- 08 -->
+    <section class="section" id="s8">
+      <div class="sec-head reveal"><span class="sec-no">08</span><span class="sec-en">Why RoPE Won · Properties</span></div>
+      <h2 class="reveal d1">为什么 RoPE 赢了</h2>
+      <p class="desc reveal d1">把前面几节的好处收拢成一张清单——这也是它如今几乎成为开源大模型默认位置方案（Llama、Qwen、Mistral、DeepSeek…）的原因。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">RoPE 的六条性质</div>
+        <div class="learns">
+          <span class="learn"><i>相对内建</i>绝对旋转 ⇒ 相对点积，精确，无须学习位置</span>
+          <span class="learn"><i>作用 Q/K</i>住在注意力计算处，逐层重注入，不被稀释进残差流</span>
+          <span class="learn"><i>长程衰减</i>多频叠加天然削弱远距离耦合，是个好先验</span>
+          <span class="learn"><i>零额外参数</i>不动 V、不占显存、几乎零算力</span>
+          <span class="learn"><i>兼容线性注意力</i>它只是对 q、k 的变换，可塞进核方法 / Performer 一类</span>
+          <span class="learn"><i>利于外推</i>是公式而非学到的表，超长位置仍给出有定义的旋转</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 -->
+    <section class="section" id="s9">
+      <div class="sec-head reveal"><span class="sec-no">09</span><span class="sec-en">Stretching Context · θ-base, PI, NTK, YaRN</span></div>
+      <h2 class="reveal d1">把上下文撑长</h2>
+      <p class="desc reveal d1">RoPE 在今天的分量，正来自<b>长上下文</b>。杠杆就是频率基底那个 <code>10000</code>。每一对的波长是 \(2\pi/\theta_i\)：低频对的波长比训练上下文还长，高频对则短得多。一旦推理时超出训练长度，那些快指针会转到<b>训练时从没见过的角度</b>——模型就崩了。修法，本质上都只是「重新拨一拨角度」。<b>拖动下面的滑块</b>，看位置插值如何把更长的序列压回训练见过的旋转范围。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · 位置插值（PI）：目标越长，刻度越被压回阴影区（训练范围）</div>
+        <div class="ruler-ctrl">
+          <span>目标长度 ×<b id="extVal">1</b></span>
+          <input type="range" id="extSlider" min="1" max="8" step="1" value="1">
+        </div>
+        <div class="ruler" id="ruler"><div class="trained" id="trained"></div><div class="tlabel">训练范围</div></div>
+        <div class="note">绿刻度＝序列里的位置。倍数越大，它们被越使劲地<b>挤进</b>模型训练时见过的旋转区间（阴影）——这就是 PI 用分辨率换范围的代价。</div>
+      </div>
+      <div class="steps reveal d2" style="margin-top:1.8rem">
+        <div class="step"><span class="si">PI</span><span class="sc"><b>位置插值 Position Interpolation</b><em>Chen et al.</em><span>把每个位置按 \(L_{\text{train}}/L_{\text{new}}\) 缩小（\(m\to m\cdot L_{\text{train}}/L_{\text{new}}\)），让 8k 序列只复用模型见过的 0–2k 旋转范围。便宜，需少量微调，用分辨率换范围。</span></span></div>
+        <div class="step"><span class="si">NTK</span><span class="sc"><b>NTK-aware 缩放</b><em>调基底</em><span>不一刀切压所有频率（那会毁掉高频的短程细节），而是<b>增大基底</b>（\(10000\to\) 更大），让低频拉长去覆盖新长度、高频几乎不动——「低频插值、高频外推」，常常不微调也能用。</span></span></div>
+        <div class="step"><span class="si">YaRN</span><span class="sc"><b>YaRN</b><em>逐频率斜坡</em><span>只插值需要插的那部分频率，短程频率原样留着，再配一点注意力温度修正——是当前廉价扩展上下文的 SOTA。</span></span></div>
+      </div>
+      <p class="desc reveal d2">这就是为什么你会在 Llama 3 的配置里看到 <code>"rope_theta": 500000</code>、在 HuggingFace 模型里看到 <code>rope_scaling</code> 块：全是在给 RoPE 的旋转速度，配一把更长的尺子。</p>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Field Note</div>
+      <h3>位置最好的写法，也许不是你「加」了什么——而是你「转」了多远。</h3>
+      <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  // ── reading progress bar ──
+  const readBar=document.getElementById('readBar');
+  let ticking=false;
+  function onScroll(){
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const h=document.documentElement, max=h.scrollHeight-h.clientHeight;
+      readBar.style.width=(max>0?(h.scrollTop/max*100):0)+'%';
+      ticking=false;
+    });
+  }
+  window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  // ── reveal on scroll (editorial: add .in when a section enters view) ──
+  const io=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('in'); });
+  },{threshold:0.12,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.hero,.section').forEach(s=>io.observe(s));
+
+  // ── §1 permutation demo ──────────────────────────────────
+  const ORDER0=['猫','追','狗'];
+  const permEl=document.getElementById('permTokens');
+  function renderPerm(arr){
+    permEl.innerHTML='';
+    arr.forEach(t=>{ const s=document.createElement('span'); s.className='tok'; s.textContent=t; permEl.appendChild(s); });
+  }
+  renderPerm(ORDER0);
+  document.getElementById('permBtn').addEventListener('click',()=>{
+    const a=ORDER0.slice();
+    for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+    renderPerm(a);
+  });
+
+  // ── §2 sinusoidal heatmap (build once) ───────────────────
+  const peGrid=document.getElementById('peGrid');
+  const PE_POS=16, PE_DIM=16, PE_BASE=10000;
+  peGrid.style.gridTemplateColumns=`repeat(${PE_DIM}, 30px)`;
+  function peVal(pos,col){
+    const i=Math.floor(col/2);
+    const ang=pos/Math.pow(PE_BASE, 2*i/PE_DIM);
+    return (col%2===0)? Math.sin(ang) : Math.cos(ang);
+  }
+  function peColor(v){
+    return v>=0 ? `rgba(200,100,60,${(0.12+0.82*v).toFixed(3)})`
+                : `rgba(127,145,131,${(0.12+0.82*Math.abs(v)).toFixed(3)})`;
+  }
+  for(let p=0;p<PE_POS;p++){
+    for(let c=0;c<PE_DIM;c++){
+      const cell=document.createElement('div');
+      cell.className='pe-cell';
+      cell.style.background=peColor(peVal(p,c));
+      peGrid.appendChild(cell);
+    }
+  }
+
+  // ── §5 rotation dial ─────────────────────────────────────
+  const TH=1; // theta = 1 rad/step
+  const CX=115, CY=115, R=84;
+  const mS=document.getElementById('mSlider'), nS=document.getElementById('nSlider');
+  const vecQ=document.getElementById('vecQ'), vecK=document.getElementById('vecK');
+  const dotQ=document.getElementById('dotQ'), dotK=document.getElementById('dotK');
+  const arc=document.getElementById('dialArc');
+  const mTag=document.getElementById('mTag'), nTag=document.getElementById('nTag');
+  const dialRead=document.getElementById('dialRead');
+  function pt(ang){ return [CX+R*Math.cos(ang), CY-R*Math.sin(ang)]; }
+  function drawDial(){
+    const m=+mS.value, n=+nS.value;
+    const am=m*TH, an=n*TH;
+    const [qx,qy]=pt(am), [kx,ky]=pt(an);
+    vecQ.setAttribute('x2',qx); vecQ.setAttribute('y2',qy);
+    vecK.setAttribute('x2',kx); vecK.setAttribute('y2',ky);
+    dotQ.setAttribute('cx',qx); dotQ.setAttribute('cy',qy);
+    dotK.setAttribute('cx',kx); dotK.setAttribute('cy',ky);
+    // wedge between the two angles
+    const large = Math.abs(an-am) % (2*Math.PI) > Math.PI ? 1 : 0;
+    const sweep = an>=am ? 1 : 0;  // svg y is down → invert
+    const rr=40;
+    const [ax,ay]=[CX+rr*Math.cos(am), CY-rr*Math.sin(am)];
+    const [bx,by]=[CX+rr*Math.cos(an), CY-rr*Math.sin(an)];
+    arc.setAttribute('d',`M ${CX} ${CY} L ${ax.toFixed(1)} ${ay.toFixed(1)} A ${rr} ${rr} 0 ${large} ${sweep?0:1} ${bx.toFixed(1)} ${by.toFixed(1)} Z`);
+    mTag.textContent='m='+m; nTag.textContent='n='+n;
+    const off=n-m, score=Math.cos(off*TH);
+    if(window.katex){
+      katex.render(
+        `\\htmlClass{m-q}{m}=${m}\\;\\to\\;${(am).toFixed(2)}\\,\\text{rad}\\quad\\htmlClass{m-k}{n}=${n}\\;\\to\\;${(an).toFixed(2)}\\,\\text{rad}`,
+        dialRead.appendChild(document.createElement('div')),
+        {throwOnError:false,trust:true,strict:false}
+      );
+    }
+  }
+  function updateDial(){
+    dialRead.innerHTML='';
+    const m=+mS.value, n=+nS.value, off=n-m, score=Math.cos(off*TH);
+    // line 1: angles (katex) + line 2: score (katex)
+    drawDial();
+    if(window.katex){
+      katex.render(
+        `\\text{相对 }\\htmlClass{m-v}{n-m}=${off}\\;\\Rightarrow\\;\\text{得分}=\\cos(${off})=\\htmlClass{m-v}{${score.toFixed(3)}}`,
+        dialRead.appendChild(document.createElement('div')),
+        {throwOnError:false,trust:true,strict:false}
+      );
+    } else {
+      dialRead.textContent=`m=${m}, n=${n} → n−m=${off} → 得分 cos(${off})=${score.toFixed(3)}`;
+    }
+  }
+  mS.addEventListener('input',updateDial);
+  nS.addEventListener('input',updateDial);
+  document.getElementById('shiftBtn').addEventListener('click',()=>{
+    let m=+mS.value+1, n=+nS.value+1;
+    const ex=Math.max(m,n)-8;
+    if(ex>0){ m-=ex; n-=ex; }
+    mS.value=m; nS.value=n; updateDial();
+  });
+
+  // ── §5 offset → cos table (build once) ───────────────────
+  const cosTab=document.getElementById('cosTab');
+  for(let o=0;o<=4;o++){
+    const cc=document.createElement('div'); cc.className='cc';
+    cc.innerHTML=`<div class="o">间隔 ${o}</div><div class="v">${Math.cos(o*TH).toFixed(3)}</div>`;
+    cosTab.appendChild(cc);
+  }
+
+  // ── §6 frequency ladder waves (build once) ───────────────
+  const waveBox=document.getElementById('waveBox');
+  (function(){
+    const W=520, bandH=42, idxs=[0,6,12,20], H=bandH*idxs.length+24;
+    const D=64, base=10000;
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    idxs.forEach((i,row)=>{
+      const theta=Math.pow(base,-2*i/D);
+      const cy=24+row*bandH+bandH/2-6;
+      const amp=bandH*0.34;
+      // x spans positions 0..16, scaled across plot width (60..W-12)
+      const x0=64, x1=W-14, posMax=16;
+      let d='';
+      for(let s=0;s<=160;s++){
+        const pos=posMax*s/160;
+        const x=x0+(x1-x0)*s/160;
+        const y=cy-amp*Math.sin(pos*theta);
+        d+=(s===0?'M':'L')+x.toFixed(1)+' '+y.toFixed(1)+' ';
+      }
+      const col = row===0?'var(--accent)':(row===idxs.length-1?'var(--sage)':'var(--accent-soft)');
+      svg+=`<line x1="64" y1="${cy}" x2="${x1}" y2="${cy}" class="axis-dash"/>`;
+      svg+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="2"/>`;
+      svg+=`<text x="6" y="${cy+3}" class="wave-lab">θ${i===0?'₀':''} ${row===0?'快':row===idxs.length-1?'慢':''}</text>`;
+    });
+    svg+=`<text x="64" y="${H-4}" class="axis-txt">位置 0</text><text x="${W-44}" y="${H-4}" class="axis-txt">位置 16</text>`;
+    svg+='</svg>';
+    waveBox.innerHTML=svg;
+  })();
+
+  // ── §6 long-term decay curve (build once) ────────────────
+  const decayBox=document.getElementById('decayBox');
+  (function(){
+    const W=520, H=180, x0=40, x1=W-14, y0=H-26, yTop=16;
+    const D=64, base=10000, half=D/2, dMax=128;
+    function decay(delta){ let s=0; for(let i=0;i<half;i++){ s+=Math.cos(delta*Math.pow(base,-2*i/D)); } return s/half; }
+    // sample
+    const N=256; let vmin=1, vmax=1, pts=[];
+    for(let s=0;s<=N;s++){ const dlt=dMax*s/N; const v=decay(dlt); pts.push([dlt,v]); if(v<vmin)vmin=v; if(v>vmax)vmax=v; }
+    const lo=Math.min(vmin,-0.25), hi=1.0;
+    const X=dlt=>x0+(x1-x0)*dlt/dMax;
+    const Y=v=>yTop+(y0-yTop)*(hi-v)/(hi-lo);
+    let d='';
+    pts.forEach((p,k)=>{ d+=(k===0?'M':'L')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)+' '; });
+    const zeroY=Y(0).toFixed(1);
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    svg+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${x0}" y1="${yTop}" x2="${x0}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${x0}" y1="${zeroY}" x2="${x1}" y2="${zeroY}" class="axis-dash"/>`;
+    svg+=`<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+    svg+=`<text x="${x0-4}" y="${(Y(1)+3).toFixed(1)}" text-anchor="end" class="axis-txt">1</text>`;
+    svg+=`<text x="${x0-4}" y="${(+zeroY+3)}" text-anchor="end" class="axis-txt">0</text>`;
+    svg+=`<text x="${x1}" y="${y0+16}" text-anchor="end" class="axis-txt">相对距离 |n − m| →</text>`;
+    svg+=`<text x="${x0}" y="${y0+16}" class="axis-txt">0</text>`;
+    svg+='</svg>';
+    decayBox.innerHTML=svg;
+  })();
+
+  // ── §9 context ruler (position interpolation) ────────────
+  const ruler=document.getElementById('ruler'), trained=document.getElementById('trained');
+  const extSlider=document.getElementById('extSlider'), extVal=document.getElementById('extVal');
+  const NTICK=9;
+  const ticks=[];
+  for(let i=0;i<NTICK;i++){ const t=document.createElement('div'); t.className='tick'; ruler.appendChild(t); ticks.push(t); }
+  function drawRuler(){
+    const mult=+extSlider.value;
+    extVal.textContent=mult;
+    trained.style.width=(100/mult)+'%';
+    ticks.forEach((t,i)=>{
+      // positions 0..(NTICK-1) spread across the *trained* fraction (interpolated)
+      const frac=(NTICK===1?0:i/(NTICK-1));
+      t.style.left=(frac*100/mult)+'%';
+    });
+  }
+  extSlider.addEventListener('input',drawRuler);
+  drawRuler();
+
+  // ── render all math with KaTeX (deferred CDN scripts ready by DOMContentLoaded) ──
+  function renderHero(){
+    const el=document.getElementById('heroFormula');
+    if(!el||!window.katex) return;
+    katex.render(
+      "\\langle\\,\\htmlClass{m-q}{R(m\\theta)}\\,q,\\;\\htmlClass{m-k}{R(n\\theta)}\\,k\\,\\rangle=q^{\\top}\\,\\htmlClass{m-v}{R\\big((n-m)\\theta\\big)}\\,k",
+      el,{displayMode:true,throwOnError:false,trust:true,strict:false}
+    );
+  }
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{
+        renderMathInElement(document.querySelector('main'),{
+          delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+          throwOnError:false,trust:true,strict:false
+        });
+      }catch(e){}
+    }
+    renderHero();
+    updateDial();   // renders the dynamic dial readout too
+  }
+  if(window.katex&&window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded',renderAllMath);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<!--
+  原理手记 / Field Notes — 对齐：RLHF 与 DPO（编辑式长文）
+  Editorial layout: head + topbar + atmosphere from the skeleton; rail/spine/
+  progress/autoplay dropped; plain <section>s of heading + .desc + .viz.
+  All math rendered with KaTeX (CDN trio, deferred).
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对齐：把「我更喜欢」教给模型（RLHF 与 DPO）· 原理手记</title>
+<meta name="description" content="我们写不出「好答案」的损失函数，只能让人来比较。从 reward model 与 Bradley-Terry，到 PPO 的四模型环路、KL 拴绳与 reward hacking，再到 DPO 一步把强化学习消解成一个监督损失——连数字一起算给你看，并讲清 PPO 与 DPO 的取舍，以及 GRPO/RLVR 这条线往哪走。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=IBM+Plex+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0e10; --bg-soft:#131417;
+    --ink:#ebe6da; --ink-dim:#9a948a; --ink-faint:#5f5b53;
+    --accent:#c8643c;        /* terracotta ember */
+    --accent-soft:#e0a07f;
+    --sage:#7f9183;          /* cool counterpoint */
+    --line:rgba(235,230,218,0.09); --line-strong:rgba(235,230,218,0.18);
+    --bg-fade:rgba(13,14,16,0.4);
+    --viz-grad:rgba(255,255,255,0.018); --chip-bg:rgba(255,255,255,0.02); --box-bg:rgba(0,0,0,0.25);
+    --grain-op:0.05; --grain-blend:overlay;
+    --serif:"Fraunces","Noto Serif SC",serif;
+    --sans:"Noto Sans SC",-apple-system,sans-serif;
+    --mono:"IBM Plex Mono","Noto Sans SC",monospace;
+  }
+  [data-theme="light"]{
+    --bg:#f4f0e7; --bg-soft:#eae4d6;
+    --ink:#22201a; --ink-dim:#6a645a; --ink-faint:#a8a191;
+    --accent:#b8512c; --accent-soft:#c4744d; --sage:#5d7466;
+    --line:rgba(34,32,26,0.12); --line-strong:rgba(34,32,26,0.22);
+    --bg-fade:rgba(244,240,231,0.45);
+    --viz-grad:rgba(34,32,26,0.022); --chip-bg:rgba(34,32,26,0.025); --box-bg:rgba(34,32,26,0.04);
+    --grain-op:0.035; --grain-blend:multiply;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.8;-webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .6s ease,color .6s ease}
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  /* ── atmosphere ──────────────────────────────────────────── */
+  .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .atmosphere::before{content:"";position:absolute;inset:0;background:radial-gradient(120% 80% at 80% -10%, rgba(200,100,60,0.10), transparent 55%),radial-gradient(90% 60% at 10% 110%, rgba(127,145,131,0.08), transparent 60%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:var(--grain-op);mix-blend-mode:var(--grain-blend);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.4;background-image:linear-gradient(var(--line) 1px,transparent 1px);background-size:100% 4.5rem;-webkit-mask-image:linear-gradient(transparent,black 30%,black 70%,transparent);mask-image:linear-gradient(transparent,black 30%,black 70%,transparent)}
+
+  /* ── top bar ─────────────────────────────────────────────── */
+  .read-bar{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--accent),var(--sage));z-index:60;transition:width .15s linear}
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:1.1rem clamp(1.2rem,4vw,3rem);backdrop-filter:blur(10px);background:linear-gradient(var(--bg),var(--bg-fade));border-bottom:1px solid var(--line);transition:background .6s ease,border-color .6s ease}
+  .top-left{display:flex;align-items:center;gap:1rem;min-width:0}
+  .home-link{flex:none;font-family:var(--mono);font-size:0.64rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;display:inline-flex;align-items:center;gap:0.45rem;border:1px solid var(--line);border-radius:1rem;padding:0.42rem 0.85rem;transition:all .4s cubic-bezier(.16,1,.3,1)}
+  .home-link:hover{border-color:var(--accent);color:var(--accent);gap:0.7rem}
+  .home-link .ar{display:inline-block;transition:transform .4s}
+  .home-link:hover .ar{transform:translateX(-3px)}
+  .wordmark{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.28em;text-transform:uppercase;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wordmark b{color:var(--ink);font-weight:500}
+  @media(max-width:680px){.wordmark{display:none}}
+  .theme-btn{cursor:pointer;background:none;border:1px solid var(--line);color:var(--ink-dim);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;transition:all .4s;flex:none}
+  .theme-btn:hover{border-color:var(--accent);color:var(--accent);transform:rotate(25deg)}
+  .theme-btn svg{width:14px;height:14px;display:block}
+  .theme-btn .moon{display:none}
+  [data-theme="light"] .theme-btn .sun{display:none}
+  [data-theme="light"] .theme-btn .moon{display:block}
+
+  /* ── shell + hero ────────────────────────────────────────── */
+  .shell{position:relative;z-index:5;max-width:1000px;margin:0 auto;padding:0 clamp(1.2rem,5vw,2rem)}
+  .hero{min-height:96vh;display:flex;flex-direction:column;justify-content:center;padding:7rem 0 4rem}
+  .hero .kicker{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.32em;text-transform:uppercase;color:var(--accent);margin-bottom:2.2rem;opacity:0;animation:rise .9s .1s forwards}
+  .hero h1{font-family:var(--serif);font-weight:300;line-height:1.05;letter-spacing:-0.01em;font-size:clamp(2.5rem,7vw,5.4rem)}
+  .hero h1 .l{display:block;opacity:0;animation:rise 1s forwards}
+  .hero h1 .l:nth-child(1){animation-delay:.18s}.hero h1 .l:nth-child(2){animation-delay:.32s}
+  .hero h1 em{font-style:italic;color:var(--accent)}
+  .hero .sub{max-width:52ch;margin-top:2.2rem;color:var(--ink);font-size:1.18rem;font-weight:400;line-height:1.9;opacity:0;animation:rise 1s .5s forwards}
+  .hero .sub code{font-family:var(--mono);font-size:0.9em;color:var(--accent-soft);background:var(--chip-bg);padding:0.1em 0.4em;border-radius:0.3em;border:1px solid var(--line)}
+  .hero-formula{margin-top:2.4rem;padding:1.5rem 1.6rem;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--viz-grad),transparent);overflow-x:auto;opacity:0;animation:rise 1s .62s forwards}
+  .hero-formula .legend{margin-top:1.1rem;display:flex;flex-wrap:wrap;gap:0.4rem 1.4rem;font-family:var(--mono);font-size:0.66rem;color:var(--ink-faint);letter-spacing:0.03em}
+  .hero-formula .legend > span{display:inline-block}
+  .hero-formula .legend i{display:inline-block;font-style:normal;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:0.45rem}
+  .hero-formula .legend .lq i{background:var(--accent)} .hero-formula .legend .lk i{background:var(--sage)} .hero-formula .legend .lv i{background:var(--accent-soft)}
+  .hero .meta{display:flex;gap:2.4rem;flex-wrap:wrap;margin-top:2.8rem;opacity:0;animation:rise 1s .72s forwards}
+  .hero .meta div{font-family:var(--mono);font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.06em}
+  .hero .meta b{display:block;font-size:1.5rem;color:var(--ink);font-weight:400;margin-bottom:0.3rem;letter-spacing:0;font-family:var(--serif)}
+
+  /* ── editorial sections ──────────────────────────────────── */
+  .section{position:relative;padding:clamp(2.8rem,6.5vw,5rem) 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:1.1rem;flex-wrap:wrap;margin-bottom:1.4rem}
+  .sec-no{font-family:var(--mono);font-size:0.78rem;color:var(--accent);letter-spacing:0.1em}
+  .sec-en{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--ink-faint)}
+  .section h2{font-family:var(--serif);font-weight:300;font-size:clamp(1.75rem,4.2vw,2.85rem);line-height:1.13;letter-spacing:-0.01em}
+  .desc{max-width:64ch;margin-top:1.2rem;color:var(--ink);font-size:1.1rem;font-weight:400;line-height:1.95}
+  .desc + .desc{margin-top:1rem}
+  .desc b{color:var(--accent-soft);font-weight:500}
+  .desc code,.note code,.hero .meta code{font-family:var(--mono);font-size:0.88em;color:var(--accent-soft);background:var(--chip-bg);padding:0.05em 0.35em;border-radius:0.3em;border:1px solid var(--line)}
+
+  /* ── viz frame ───────────────────────────────────────────── */
+  .viz{margin-top:2.2rem;background:linear-gradient(180deg,var(--viz-grad),transparent);border:1px solid var(--line);border-radius:14px;padding:clamp(1.4rem,3.5vw,2.1rem);position:relative;overflow:hidden}
+  .viz::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--line-strong),transparent)}
+  .viz-cap{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:1.3rem}
+  .note{margin-top:1.3rem;padding-top:1.1rem;border-top:1px dashed var(--line);font-family:var(--mono);font-size:0.72rem;color:var(--ink-dim);letter-spacing:0.02em;line-height:1.85}
+  .note b{color:var(--accent-soft);font-weight:500}
+
+  /* ── KaTeX math ──────────────────────────────────────────── */
+  .katex{font-size:1.05em}
+  .desc .katex,.note .katex,.legend .katex,.read .katex,.cmp .katex,.ctab .katex{font-size:1em}
+  .katex .m-q{color:var(--accent)}
+  .katex .m-k{color:var(--sage)}
+  .katex .m-v{color:var(--accent-soft)}
+  .formula{margin:1.6rem 0 0.3rem;display:flex;justify-content:center;overflow-x:auto;padding:0.3rem 0}
+  .formula .katex-display{margin:0}
+  .formula .katex-display>.katex{white-space:normal}
+
+  /* ── reveal ──────────────────────────────────────────────── */
+  .reveal{opacity:0;transform:translateY(24px);transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1)}
+  .reveal.d1{transition-delay:.1s}.reveal.d2{transition-delay:.22s}.reveal.d3{transition-delay:.34s}
+  .in .reveal{opacity:1;transform:none}
+
+  /* ── reused library: facts / chips / steps / learns ──────── */
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.8rem;margin-top:1.6rem}
+  .fact{border:1px solid var(--line);border-radius:10px;padding:1.05rem 1rem;background:var(--chip-bg)}
+  .fact b{display:block;font-family:var(--serif);font-size:1.4rem;color:var(--accent-soft);font-weight:400;line-height:1.05}
+  .fact.s b{color:var(--sage)}
+  .fact span{display:block;font-family:var(--mono);font-size:0.6rem;letter-spacing:0.05em;color:var(--ink-faint);margin-top:0.55rem;text-transform:uppercase}
+  .chips{display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:0.4rem}
+  .chip{font-family:var(--mono);font-size:0.82rem;color:var(--ink-dim);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.95rem;background:var(--chip-bg)}
+  .chip.hot{color:var(--accent);border-color:rgba(200,100,60,0.45)}
+  .chip.cool{color:var(--sage);border-color:rgba(127,145,131,0.45)}
+  .steps{display:flex;flex-direction:column;gap:0;margin-top:0.5rem}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:1.1rem;align-items:start;padding:0.6rem 0;position:relative}
+  .step .si{font-family:var(--mono);font-size:0.66rem;color:var(--accent);border:1px solid rgba(200,100,60,0.4);min-width:46px;padding:0 0.4rem;height:27px;border-radius:14px;display:grid;place-items:center;flex:none;background:var(--bg);z-index:1}
+  .step .sc b{color:var(--ink);font-weight:500;font-family:var(--sans);font-size:1rem}
+  .step .sc em{font-family:var(--mono);font-style:normal;font-size:0.68rem;color:var(--accent-soft);letter-spacing:0.04em;margin-left:0.4rem}
+  .step .sc > span{display:block;color:var(--ink-dim);font-size:0.94rem;margin-top:0.25rem;line-height:1.75}
+  .step:not(:last-child)::before{content:"";position:absolute;left:22px;top:34px;bottom:-2px;width:1px;background:var(--line-strong)}
+  .learns{display:flex;flex-wrap:wrap;gap:0.55rem;margin-top:0.2rem}
+  .learn{font-family:var(--sans);font-size:0.9rem;color:var(--ink);border:1px solid var(--line-strong);border-radius:0.5rem;padding:0.5rem 0.9rem;background:var(--chip-bg);max-width:48ch}
+  .learn i{font-style:normal;color:var(--accent);margin-right:0.5rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.04em}
+  .learn.s i{color:var(--sage)}
+
+  /* ── svg figures ─────────────────────────────────────────── */
+  .svgbox{width:100%;overflow-x:auto}
+  .svgbox svg{display:block;width:100%;height:auto}
+  .axis-line{stroke:var(--line-strong);stroke-width:1}
+  .axis-dash{stroke:var(--line-strong);stroke-width:1;stroke-dasharray:3 4}
+  .axis-txt{font-family:var(--mono);font-size:0.58rem;fill:var(--ink-faint)}
+
+  /* pipeline flow diagram */
+  .flowsvg svg{min-width:600px}
+  .flowsvg .pbx{fill:var(--chip-bg);stroke:var(--line-strong);stroke-width:1.4}
+  .flowsvg .pbx.a{stroke:var(--accent)} .flowsvg .pbx.s{stroke:var(--sage)} .flowsvg .pbx.g{stroke:var(--ink-dim)}
+  .flowsvg .ptt{font-family:var(--mono);font-size:11px;fill:var(--ink)}
+  .flowsvg .pst{font-family:var(--mono);font-size:8px;fill:var(--ink-faint);letter-spacing:0.04em}
+  .flowsvg .pln{fill:none;stroke-width:1.6}
+  .flowsvg .pln.n{stroke:var(--ink-dim)} .flowsvg .pln.a{stroke:var(--accent)} .flowsvg .pln.s{stroke:var(--sage)}
+
+  /* interactive blocks (sigmoid) */
+  .iact{display:grid;grid-template-columns:minmax(0,1.25fr) 1fr;gap:1.4rem 2rem;align-items:center}
+  @media(max-width:640px){.iact{grid-template-columns:1fr}}
+  .iact .svgbox svg{min-width:320px}
+  .ctrl{display:flex;flex-direction:column;gap:1.1rem;min-width:0;width:100%}
+  .slab{display:flex;align-items:center;gap:0.9rem;font-family:var(--mono);font-size:0.78rem;color:var(--ink-dim)}
+  .slab .nm{width:132px;flex:none}
+  .slab .nm b{color:var(--accent);font-weight:500}
+  .slab.k .nm b{color:var(--sage)}
+  .slab input[type=range]{flex:1;accent-color:var(--accent);cursor:pointer;min-width:80px}
+  .slab.k input[type=range]{accent-color:var(--sage)}
+  .read{font-family:var(--mono);font-size:0.86rem;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:0.9rem 1rem;background:var(--chip-bg);line-height:2}
+  .read .sv{color:var(--accent-soft);font-weight:500}
+
+  /* computed-number cards */
+  .ctab{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:0.5rem;margin-top:1.6rem}
+  .ctab .cc{border:1px solid var(--line);border-radius:8px;padding:0.7rem 0.5rem;text-align:center;background:var(--chip-bg)}
+  .ctab .cc .o{font-family:var(--mono);font-size:0.56rem;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.05em}
+  .ctab .cc .v{font-family:var(--serif);font-size:1.15rem;margin-top:0.35rem;color:var(--accent-soft)}
+  .ctab .cc.s .v{color:var(--sage)}
+
+  /* comparison table */
+  .cmp-wrap{overflow-x:auto;margin-top:0.4rem}
+  .cmp{display:grid;grid-template-columns:130px 1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:580px}
+  .cmp > div{background:var(--bg);padding:0.72rem 0.85rem;font-size:0.86rem;line-height:1.55;color:var(--ink)}
+  .cmp .ch{font-family:var(--mono);font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;background:var(--chip-bg)}
+  .cmp .ch.a{color:var(--accent)} .cmp .ch.s{color:var(--sage)} .cmp .ch.x{color:var(--ink-faint)}
+  .cmp .rl{font-family:var(--mono);font-size:0.66rem;color:var(--ink-dim);background:var(--chip-bg);letter-spacing:0.02em;display:flex;align-items:center}
+
+  /* goodhart legend */
+  .gleg{display:flex;flex-wrap:wrap;gap:0.5rem 1.4rem;margin-top:1rem;font-family:var(--mono);font-size:0.64rem;color:var(--ink-faint)}
+  .gleg span i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:0.45rem}
+  .gleg .gp i{background:var(--accent)} .gleg .gt i{background:var(--sage)}
+
+  /* ── finale ──────────────────────────────────────────────── */
+  .finale{text-align:center;padding:6rem 0 8rem;position:relative;z-index:5}
+  .finale .mark{font-family:var(--mono);font-size:0.7rem;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);margin-bottom:1.6rem}
+  .finale h3{font-family:var(--serif);font-weight:300;font-style:italic;font-size:clamp(1.5rem,3.6vw,2.3rem);line-height:1.45;max-width:36ch;margin:0 auto;color:var(--ink)}
+  .nextpost{margin-top:2.6rem;display:inline-flex;align-items:center;gap:0.7rem;font-family:var(--mono);font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);text-decoration:none;border:1px solid var(--line-strong);border-radius:2rem;padding:0.8rem 1.6rem;transition:all .45s}
+  .nextpost:hover{border-color:var(--accent);color:var(--accent);gap:1.1rem}
+
+  /* ── keyframes + reduced motion ──────────────────────────── */
+  @keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}.hero .kicker,.hero h1 .l,.hero .sub,.hero-formula,.hero .meta{opacity:1!important}}
+</style>
+</head>
+<body>
+  <div class="atmosphere"></div>
+  <div class="grid-lines"></div>
+  <div class="grain"></div>
+  <div class="read-bar" id="readBar"></div>
+
+  <header class="topbar">
+    <div class="top-left">
+      <a class="home-link" href="../index.html" aria-label="返回主页"><span class="ar">←</span> 原理手记</a>
+      <div class="wordmark">对齐 · <b>RLHF & DPO</b></div>
+    </div>
+    <button class="theme-btn" id="themeBtn" aria-label="切换主题">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1.5 12h3M19.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke-linecap="round"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main class="shell">
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <div class="kicker">原理手记 · 对齐 RLHF 与 DPO</div>
+      <h1>
+        <span class="l">写不出</span>
+        <span class="l">「<em>好答案</em>」的损失。</span>
+      </h1>
+      <p class="sub">预训练教模型「下一个词最可能是什么」，SFT 教它「被问时要像示范那样回答」——可两者都没法表达「这个回答<b>比那个更让人满意</b>」。因为「有用、诚实、无害」没有解析式。于是换条路：不去<b>定义</b>好，而是让人来<b>比较</b>。这篇讲清，一摞「我更喜欢 A 而不是 B」，如何变成模型的梯度。</p>
+      <div class="hero-formula">
+        <div class="formula" id="heroFormula"></div>
+        <div class="legend">
+          <span class="lq"><i></i>赢的回答 \(y_w\) 的隐式奖励</span>
+          <span class="lk"><i></i>输的回答 \(y_l\) 的隐式奖励</span>
+          <span class="lv"><i></i>没有 reward model、没有 RL——这就是 DPO</span>
+        </div>
+      </div>
+      <div class="meta">
+        <div><b>2 ↔ 4</b>训练时的模型数 DPO↔PPO</div>
+        <div><b>σ(Δr)</b>偏好的概率模型</div>
+        <div><b>在线/离线</b>取舍的分水岭</div>
+      </div>
+    </section>
+
+    <!-- 01 -->
+    <section class="section" id="s1">
+      <div class="sec-head reveal"><span class="sec-no">01</span><span class="sec-en">The Gap · Beyond Imitation</span></div>
+      <h2 class="reveal d1">对齐要补的，是 SFT 补不上的那一段</h2>
+      <p class="desc reveal d1">先把三步流水线摆清。<b>预训练</b>在整个互联网上做 next-token 预测，得到一个「什么都能往下接」的模型——但它续写的是互联网，不是一个好助手。<b>SFT</b>（监督微调 / 指令微调）用人写的 <code>(指令, 理想回答)</code> 对，做和预训练<b>一模一样</b>的交叉熵，只是把数据换成示范，于是模型学会了「被提问时要回答问题」的格式与口吻。</p>
+      <p class="desc reveal d1">但 SFT 有一道硬天花板：它只有<b>正样本</b>，只会<b>模仿</b>示范，且无法超过示范者；它从没被告诉「什么是差的回答」。可我们想要的「更有用」是一个<b>偏好排序</b>，不是一段能照抄的目标序列。一句话钉死区别——<b>SFT 最大化「示范回答」的似然；对齐则最大化「人类偏好下的期望奖励」</b>，后者第一次有了「A 比 B 好」的<b>相对</b>信号。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">全景 · 同一份偏好数据，通向两条对齐路径</div>
+        <div class="svgbox flowsvg" id="pipeBox"></div>
+        <div class="note">两条路同源——都从「人对回答的两两比较」出发。<b>上面一条</b>先把偏好炼成一个 reward model，再用 PPO 在线追它（经典 RLHF）；<b>下面一条</b>（DPO）跳过这一切，直接在偏好对上训一个损失。本文走完它们，再讲取舍。</div>
+      </div>
+      <div class="learns reveal d2" style="margin-top:1.6rem">
+        <span class="learn"><i>预训练</i>学「世界长什么样」——海量文本上的自监督</span>
+        <span class="learn"><i>SFT</i>学「助手该怎么答」——模仿示范，只有正例</span>
+        <span class="learn"><i>对齐</i>学「人更喜欢哪一个」——相对偏好，有正有负</span>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section class="section" id="s2">
+      <div class="sec-head reveal"><span class="sec-no">02</span><span class="sec-en">Reward Model · Bradley-Terry</span></div>
+      <h2 class="reveal d1">Reward Model：把「我更喜欢」压成一个分数</h2>
+      <p class="desc reveal d1">第一步，把人心里那把模糊的尺子<b>固化成一个可计算的函数</b>。做法：对同一个 prompt 让模型采样出多个回答，请人（或更强的模型）两两比较，得到一堆三元组 <code>(x, y_w, y_l)</code>——同一问题下，<b>赢家</b> \(y_w\) 与<b>输家</b> \(y_l\)。然后拿 SFT 模型，把它最后的语言模型头换成一个<b>标量输出头</b>：读入「prompt + 回答」，吐出一个分数 \(r(x,y)\)。</p>
+      <p class="desc reveal d1">怎么训这个分数？用 <b>Bradley-Terry 模型</b>——一个把「成对比较」接上概率的经典框架。它假设「人选 A 而非 B」的概率，由两者分数之差经 <code>sigmoid</code> 给出：</p>
+      <div class="formula reveal d1">\[ P(y_w \succ y_l \mid x) = \sigma\big(r(x,y_w) - r(x,y_l)\big),\qquad \sigma(z)=\frac{1}{1+e^{-z}} \]</div>
+      <p class="desc reveal d2">于是 reward model 的损失就是这件事的负对数似然——把赢家分数推高、输家压低：</p>
+      <div class="formula reveal d2">\[ \mathcal{L}_{\text{RM}} = -\,\mathbb{E}_{(x,y_w,y_l)}\Big[\log\sigma\big(r(x,y_w)-r(x,y_l)\big)\Big] \]</div>
+      <p class="desc reveal d2">关键认知：它只在乎<b>两者之差</b>，不在乎绝对值——整张分数表加减一个常数，损失分毫不变。所以 reward model 学的是<b>相对偏好</b>，它的绝对刻度没有意义。<b>拖动下面两个滑块</b>给那条祝福的两个回答打分，看「差」如何决定模型认为「人有多大概率选赢家」，以及当下这条样本的损失。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">交互 · Bradley-Terry：分数差 → 选择概率 → 损失</div>
+        <div class="iact">
+          <div class="svgbox" id="btBox"></div>
+          <div class="ctrl">
+            <div class="slab"><span class="nm">赢家 <b id="rwTag">r(y_w)=2.3</b></span><input type="range" id="rwSlider" min="-2" max="4" step="0.1" value="2.3"></div>
+            <div class="slab k"><span class="nm">输家 <b id="rlTag">r(y_l)=−0.5</b></span><input type="range" id="rlSlider" min="-2" max="4" step="0.1" value="-0.5"></div>
+            <div class="read" id="btRead"></div>
+          </div>
+        </div>
+        <div class="note">例：祝福 A 打 <b>2.3</b>、敷衍的 B 打 <b>−0.5</b>，差 <b>2.8</b> → \(\sigma(2.8)\approx0.94\)，模型认定人有 94% 会选 A，损失只剩 \(-\log0.94\approx0.06\)。把两个分数拉到一样，概率回到 50%、损失升到 \(\log 2\approx0.69\)——它对自己的判断毫无把握。</div>
+      </div>
+      <p class="desc reveal d2">埋一颗雷：这个 reward model 是一个<b>被训练出来的、有限的代理</b>（proxy），不是真的人类偏好。它在没见过的回答上会出错、有自己的怪癖。下一步的 PPO，会拼命去钻它的空子。</p>
+    </section>
+
+    <!-- 03 -->
+    <section class="section" id="s3">
+      <div class="sec-head reveal"><span class="sec-no">03</span><span class="sec-en">PPO · Reward-Chasing with a Leash</span></div>
+      <h2 class="reveal d1">PPO：用强化学习去追这个分数</h2>
+      <p class="desc reveal d1">有了能打分的 reward model，对齐就被改写成一道<b>强化学习</b>题。把语言模型看成<b>策略</b> \(\pi_\theta\)：状态是「已经生成的前缀」，动作是「下一个 token」，一整条回答采样完，由 reward model 在末尾给一个标量奖励。目标——调 \(\theta\) 让期望奖励最大，但要<b>拴一根绳</b>：</p>
+      <div class="formula reveal d1">\[ \max_\theta\ \mathbb{E}_{x\sim D,\,y\sim\pi_\theta(\cdot\mid x)}\big[\,r(x,y)\,\big]\;-\;\beta\,\mathrm{KL}\!\big(\pi_\theta(y\mid x)\,\|\,\pi_{\text{ref}}(y\mid x)\big) \]</div>
+      <p class="desc reveal d2">那根绳就是 <b>KL 惩罚</b>。不拴的话，策略会漂去专门讨好 reward model——生成人根本看不懂、但 RM 偏偏给高分的怪话（这就是 <b>reward hacking / 奖励黑客</b>，下一节细说）。KL 把当前策略拽在 SFT 模型（reference \(\pi_{\text{ref}}\)）附近，<b>别跑太远</b>；\(\beta\) 控制松紧。实现上，这条 KL 通常被摊进每一步的 token 奖励里：</p>
+      <div class="formula reveal d2">\[ r_t = -\,\beta\big(\log\pi_\theta(a_t\mid s_t)-\log\pi_{\text{ref}}(a_t\mid s_t)\big)\;+\;\underbrace{r(x,y)}_{\text{仅在末端}} \]</div>
+      <p class="desc reveal d2">为什么不能直接对奖励梯度上升？因为奖励来自「采样 + 打分」这条<b>不可导</b>的链路，只能用 policy gradient（REINFORCE 一类）去<b>估计</b>梯度，而这种估计的<b>方差极大</b>。PPO（Proximal Policy Optimization，近端策略优化）就是让它稳下来的那套方法，两件法宝：</p>
+      <p class="desc reveal d2"><b>① advantage（优势）+ GAE。</b>不直接用「拿到多少奖励」，而用「比预期好多少」。引入一个 <b>value model（价值网络 / critic）</b> 估计基线 \(V(s)\)，advantage 衡量某一步动作超出基线多少；GAE 用 \(\gamma,\lambda\) 在偏差与方差间权衡，把末端奖励平滑地回传到每个 token：</p>
+      <div class="formula reveal d2">\[ \hat A_t=\sum_{l\ge0}(\gamma\lambda)^l\,\delta_{t+l},\qquad \delta_t=r_t+\gamma V(s_{t+1})-V(s_t) \]</div>
+      <p class="desc reveal d2"><b>② clip（裁剪）。</b>用重要性采样比 \(\rho_t=\pi_\theta/\pi_{\text{old}}\) 复用旧样本，再把它<b>剪</b>到 \([1-\epsilon,\,1+\epsilon]\)，让每步只许策略相对旧策略改一点点——这就是 "Proximal（近端）" 的字面意思，防止一次更新步子太大、把策略带崩：</p>
+      <div class="formula reveal d2">\[ L^{\text{CLIP}}(\theta)=\mathbb{E}_t\Big[\min\!\big(\rho_t\hat A_t,\ \mathrm{clip}(\rho_t,\,1-\epsilon,\,1+\epsilon)\,\hat A_t\big)\Big] \]</div>
+      <div class="viz reveal d2">
+        <div class="viz-cap">PPO 的 clip · 当 advantage &gt; 0，奖励再诱人，单步放大也被锁在 1+ε</div>
+        <div class="svgbox" id="clipBox"></div>
+        <div class="steps" style="margin-top:1.4rem">
+          <div class="step"><span class="si">设定</span><span class="sc"><b>旧策略给这个 token 概率 0.10</b><span>新策略很想把它抬到 0.16 —— 重要性比 \(\rho=0.16/0.10=1.6\)，而 advantage 为正（这步比平均好）。</span></span></div>
+          <div class="step"><span class="si">裁剪</span><span class="sc"><b>取 ε = 0.2</b><em>clip 到 1.2</em><span>\(\rho=1.6\) 越出 \([0.8,1.2]\)，被剪回 \(1.2\)。</span></span></div>
+          <div class="step"><span class="si">结果</span><span class="sc"><b>目标按 min(1.6·A, 1.2·A) = 1.2·A 计</b><span>一步最多把这个 token 的概率往上推「相当于 1.2 倍」那么多，多出来的冲动被剪掉——下一轮重新采样、再走一小步。稳，但慢。</span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 -->
+    <section class="section" id="s4">
+      <div class="sec-head reveal"><span class="sec-no">04</span><span class="sec-en">The Cost · Four Models &amp; Reward Hacking</span></div>
+      <h2 class="reveal d1">PPO 为什么又重又难</h2>
+      <p class="desc reveal d1">把上一节的零件数一遍，就明白 PPO 的代价了。训练时，显存里<b>同时</b>站着四个模型——这是它重、贵、难调的根源：</p>
+      <div class="facts reveal d2">
+        <div class="fact"><b>Policy</b><span>在训 · 正在更新的策略</span></div>
+        <div class="fact"><b>Reference</b><span>冻结 · 算 KL 拴绳的锚</span></div>
+        <div class="fact"><b>Reward</b><span>冻结 · 给回答打分</span></div>
+        <div class="fact"><b>Value</b><span>在训 · critic 估基线</span></div>
+      </div>
+      <p class="desc reveal d2">四个模型还不是最痛的。最痛的是：你优化的从来不是「人类偏好」，而是它的<b>代理</b> reward model。一旦策略获得自由，它会像找漏洞一样去钻 RM 的脆弱处——这就是 <b>reward hacking</b>。典型现场：RM 的训练数据里碰巧「长答案常被偏好」，PPO 就把每个回答<b>灌水</b>到老长；或者发现 RM 偏爱「希望这对你有帮助！」这类客套、偏爱满屏 markdown，就疯狂堆砌。回答的 RM 分数一路飙升，对人的<b>真实有用度却在下跌</b>。</p>
+      <p class="desc reveal d2">这正是 <b>Goodhart 定律</b>：当一个指标成为优化目标，它就不再是个好指标。KL 拴绳能拖慢这种漂移，却治不了本——因为代理本身有缺陷。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">Goodhart · 越使劲优化代理，与真目标越背离</div>
+        <div class="svgbox" id="ghBox"></div>
+        <div class="gleg">
+          <span class="gp"><i></i>reward model 分数（代理）：一路走高</span>
+          <span class="gt"><i></i>真实人类偏好：先升，后被反噬而回落</span>
+        </div>
+        <div class="note">两条线在前半程同向，于是早期 RLHF 确实在变好；越过那个<b>背离点</b>，模型开始为了刷分而牺牲真有用度。何时停、KL 多紧、RM 多准——PPO 的大半调参功夫，都花在这道平衡上。</div>
+      </div>
+    </section>
+
+    <!-- 05 -->
+    <section class="section" id="s5">
+      <div class="sec-head reveal"><span class="sec-no">05</span><span class="sec-en">DPO · Solving the RL Away</span></div>
+      <h2 class="reveal d1">DPO：把强化学习这步直接解掉</h2>
+      <p class="desc reveal d1">能不能不要 reward model、不要采样 rollout、不要 PPO，<b>直接在偏好对上训</b>？DPO（Direct Preference Optimization，直接偏好优化）的答案是能——而且只用四步代数。诀窍在于：上一节那个「最大期望奖励 − KL」的目标，其实有一个<b>闭式最优解</b>。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">四步推导 · reward model 如何被「解」进策略自身</div>
+        <div class="steps">
+          <div class="step"><span class="si">起点</span><span class="sc"><b>RLHF 的目标</b><span>\( \max_\theta\ \mathbb{E}_{y\sim\pi_\theta}[\,r(x,y)\,]-\beta\,\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}}) \)——奖励要高，但别离 reference 太远。</span></span></div>
+          <div class="step"><span class="si">闭式解</span><span class="sc"><b>这目标有解析最优策略</b><span>\( \pi^{*}(y\mid x)=\tfrac{1}{Z(x)}\,\pi_{\text{ref}}(y\mid x)\,e^{\,r(x,y)/\beta} \)——在 reference 上「按奖励的指数」重新加权；\(Z(x)=\sum_y\pi_{\text{ref}}(y\mid x)e^{r/\beta}\) 是只对 \(x\) 求和的配分函数（归一化常数）。</span></span></div>
+          <div class="step"><span class="si">反解</span><span class="sc"><b>把奖励用策略写回来</b><span>对上式取对数、移项：\( r(x,y)=\beta\log\tfrac{\pi^{*}(y\mid x)}{\pi_{\text{ref}}(y\mid x)}+\beta\log Z(x) \)——任何奖励，都能这样用「最优策略相对 reference 的对数概率」表示。</span></span></div>
+          <div class="step"><span class="si">抵消</span><span class="sc"><b>代回 Bradley-Terry，Z(x) 消失</b><span>偏好只看奖励之<b>差</b>，而 \(\beta\log Z(x)\) 只依赖 \(x\)、与回答无关，在 \(r(x,y_w)-r(x,y_l)\) 里 \(\htmlClass{m-v}{\text{整项抵消}}\)。把那个解不出来的归一化常数，干净地约掉了。</span></span></div>
+        </div>
+        <div class="note">于是「人选赢家」的概率，只剩下<b>策略自己</b>的对数概率比值（把最优 \(\pi^{*}\) 换成待训的 \(\pi_\theta\)）——reward model 被彻底解进了策略里。</div>
+      </div>
+      <p class="desc reveal d2">把它写成最大似然，就是 DPO 的损失——一个能直接<b>反向传播</b>的监督式分类损失：</p>
+      <div class="formula reveal d2">\[ \mathcal{L}_{\text{DPO}}=-\,\mathbb{E}_{(x,y_w,y_l)}\Big[\log\sigma\Big(\beta\log\tfrac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}-\beta\log\tfrac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\Big)\Big] \]</div>
+      <p class="desc reveal d2">翻成人话：<b>语言模型自己，在「相对 reference 的对数概率」这个尺度上，就充当了它自己的 reward model</b>。不再单独训 RM、不再采样 rollout、不再做 RL。训练时显存里只剩 <b>两个</b>模型——在训的 policy 和冻结的 reference。便宜、稳定，几乎像 SFT 一样好训。</p>
+      <div class="facts reveal d2">
+        <div class="fact s"><b>2</b><span>训练时的模型数（policy + reference）</span></div>
+        <div class="fact s"><b>无</b><span>单独的 reward model</span></div>
+        <div class="fact s"><b>无</b><span>在线采样 / RL 循环</span></div>
+        <div class="fact s"><b>1 个</b><span>可反传的监督损失</span></div>
+      </div>
+    </section>
+
+    <!-- 06 -->
+    <section class="section" id="s6">
+      <div class="sec-head reveal"><span class="sec-no">06</span><span class="sec-en">By the Numbers · DPO's Implicit Reward</span></div>
+      <h2 class="reveal d1">DPO 的一步更新，连数字一起算</h2>
+      <p class="desc reveal d1">DPO 损失里那一坨 \(\beta\log\tfrac{\pi_\theta}{\pi_{\text{ref}}}\) 有个名字——<b>隐式奖励</b>（implicit reward）。它就是模型悄悄给每个回答打的分：</p>
+      <div class="formula reveal d1">\[ \hat r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)} \]</div>
+      <p class="desc reveal d2">拿那条祝福算一遍。取 \(\beta=0.1\)，把回答的<b>整句对数概率</b>（各 token 之和）写出来——赢家 \(y_w\)（温暖具体那条）、输家 \(y_l\)（敷衍套话那条）在 reference 与当前策略下分别是：</p>
+      <div class="ctab reveal d2">
+        <div class="cc"><div class="o">log π_ref(y_w)</div><div class="v">−20.0</div></div>
+        <div class="cc"><div class="o">log π_θ(y_w)</div><div class="v">−19.0</div></div>
+        <div class="cc"><div class="o">Δ_w = 差</div><div class="v">+1.0</div></div>
+        <div class="cc s"><div class="o">log π_ref(y_l)</div><div class="v">−18.0</div></div>
+        <div class="cc s"><div class="o">log π_θ(y_l)</div><div class="v">−18.5</div></div>
+        <div class="cc s"><div class="o">Δ_l = 差</div><div class="v">−0.5</div></div>
+      </div>
+      <p class="desc reveal d2">隐式奖励之差就是 \(\beta(\Delta_w-\Delta_l)=0.1\times\big(1.0-(-0.5)\big)=\mathbf{0.15}\)；代进 \(\sigma\) 得 \(\sigma(0.15)\approx\mathbf{0.54}\)，这条样本的损失 \(-\log0.54\approx\mathbf{0.62}\)。读数：模型当前只<b>略微</b>偏好赢家，离「确信」还很远，所以损失不小、还要继续学。</p>
+      <p class="desc reveal d2">这一步梯度会做什么？它<b>抬高赢家、压低输家</b>的相对对数概率，而且按「当前错得多严重」<b>自动加权</b>：</p>
+      <div class="formula reveal d2">\[ \nabla_\theta\mathcal{L}_{\text{DPO}}=-\,\beta\,\underbrace{\sigma\big(\hat r_\theta(x,y_l)-\hat r_\theta(x,y_w)\big)}_{\text{错判得越狠，权重越接近 1}}\Big[\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\Big] \]</div>
+      <p class="desc reveal d2">当模型反而给输家更高的隐式奖励（排序错了），那个 \(\sigma(\cdot)\) 权重趋近 1，更新最猛；当它已把赢家排在前头，权重趋近 0，几乎不动——天然的「难例优先」。这正是 DPO 把整套 PPO（reward model + 采样 + clip 更新）压成一个损失后，依然<b>奏效</b>的内在道理。</p>
+      <div class="note reveal d2" style="border-top:none;padding-top:0">⚠ 但要当心两个失败模式：只要「差」在涨，赢家与输家的<b>绝对概率可能一起掉</b>，把概率质量挤到分布外的怪地方；\(\beta\) 太小则会过度偏离 reference。DPO 稳，不等于没有坑。</div>
+    </section>
+
+    <!-- 07 -->
+    <section class="section" id="s7">
+      <div class="sec-head reveal"><span class="sec-no">07</span><span class="sec-en">The Trade-off · Online vs Offline</span></div>
+      <h2 class="reveal d1">取舍：在线 vs 离线，才是分水岭</h2>
+      <p class="desc reveal d1">DPO 这么省，为什么 PPO 没被淘汰？因为两者最深的差别不在「省不省」，而在<b>信号怎么来</b>。PPO 是<b>在线</b>（on-policy）的：每一步都用<b>当前</b>策略采新回答，reward model 能对「模型此刻真会生成的分布」打分，于是能持续探索、走出偏好数据没覆盖的新区域。DPO 是<b>离线</b>（off-policy）的：只在一份<b>固定</b>的偏好集上学，数据没覆盖的回答，它拿不到任何信号——<b>质量上限被数据集框住</b>。</p>
+      <div class="viz reveal d2">
+        <div class="viz-cap">逐项对照 · PPO（在线 RLHF）↔ DPO（直接偏好优化）</div>
+        <div class="cmp-wrap">
+          <div class="cmp">
+            <div class="ch x">维度</div><div class="ch a">PPO · 在线 RLHF</div><div class="ch s">DPO · 直接偏好优化</div>
+            <div class="rl">信号来源</div><div>学出来的 reward model，可对任意新样本打分</div><div>固定的偏好数据集，信号止于已标注的对</div>
+            <div class="rl">采样</div><div>在线 on-policy，每步用当前策略采新回答</div><div>离线 off-policy，只用既有偏好对，不采样</div>
+            <div class="rl">训练模型数</div><div>4（policy / reference / reward / value）</div><div>2（policy / reference）</div>
+            <div class="rl">显式 reward model</div><div>有——一层会被 hack 的代理</div><div>无——模型即自身的隐式 RM</div>
+            <div class="rl">稳定 / 好调</div><div>不稳，对 β、ε、学习率敏感，易崩</div><div>稳，像 SFT 一样好训、可复现</div>
+            <div class="rl">质量上限</div><div>更高——能探索出数据外的好回答</div><div>受偏好数据分布限制，难超出覆盖</div>
+            <div class="rl">工程 / 成本</div><div>重、贵、要分布式 rollout</div><div>轻、便宜，一张损失跑完</div>
+            <div class="rl">何时选它</div><div>追最高上限、有工程力、有可验证奖励</div><div>起步、资源有限、要快与复现</div>
+          </div>
+        </div>
+        <div class="note">DPO 还对偏好数据的<b>分布</b>敏感：若偏好对里的回答不来自（接近）被训模型自己的分布，效果会打折——实践中常先用<b>待训模型自己采样、再标注</b>来缓解，让离线数据「贴近在线」。</div>
+      </div>
+      <p class="desc reveal d2">所以怎么选？资源有限、要快速可复现 → <b>DPO</b>，它如今是多数开源对齐的默认起点。追求最高上限、有工程能力、需要在线探索（尤其数学、代码这类有<b>可验证</b>答案的任务）→ <b>on-policy RL</b>。现实里的前沿做法常是<b>混合</b>：先用 DPO 做便宜的第一轮对齐，再用在线 RL 精修。</p>
+    </section>
+
+    <!-- 08 -->
+    <section class="section" id="s8">
+      <div class="sec-head reveal"><span class="sec-no">08</span><span class="sec-en">The Aftermath · RLAIF, GRPO, RLVR</span></div>
+      <h2 class="reveal d1">余波：这条线正在往哪走</h2>
+      <p class="desc reveal d1">RM / PPO / DPO 之后，对齐这条线还在快速演化，但拨的都是同三个旋钮——<b>信号从哪来、要不要 critic、代理多容易被钻空子</b>。几个绕不开的名字：</p>
+      <p class="desc reveal d2"><b>GRPO</b>（Group Relative Policy Optimization，组相对策略优化）把 PPO 的 <b>value model 砍掉了</b>。它怎么估 advantage？对同一个 prompt 一次采样<b>一组</b> \(G\) 个回答，每个拿到奖励 \(r_i\)，直接用<b>这组的均值和标准差</b>做归一化——「比同组平均好多少」，就是 advantage：</p>
+      <div class="formula reveal d2">\[ \hat A_i=\frac{r_i-\operatorname{mean}(r_1,\dots,r_G)}{\operatorname{std}(r_1,\dots,r_G)} \]</div>
+      <div class="viz reveal d2">
+        <div class="viz-cap">GRPO · 用一组样本的相对名次当基线，省掉 value model</div>
+        <div class="svgbox" id="grpoBox"></div>
+        <div class="note">同一道题采 \(G\) 个答案，画一条组内均值线；高于均值的样本得正 advantage（被强化），低于的得负（被抑制）。<b>不再需要单独的 critic</b>——内存里又少一个模型，估计也更稳。DeepSeek 在数学 / 推理模型上用的就是它。</div>
+      </div>
+      <p class="desc reveal d2"><b>RLVR</b>（RL with Verifiable Rewards，可验证奖励的 RL）换掉了「奖励从哪来」：不再用一个学出来的 reward model，而用一个<b>可验证的检查器</b>——数学题对答案、代码过单元测试。于是那层「会被 hack 的 RM」整个消失了（虽然验证器本身仍可能被钻，比如蒙对答案、写退化代码骗测试）。把模糊的人类偏好换成<b>客观真值</b>，正是 o1 / R1 这批推理模型爆发的关键。</p>
+      <div class="steps reveal d2" style="margin-top:1.4rem">
+        <div class="step"><span class="si">RLAIF</span><span class="sc"><b>用 AI 代替人来标偏好</b><em>含 Constitutional AI</em><span>让更强的模型按一套写明的原则去比较回答，产出偏好标注，绕开人工标注的瓶颈与成本。信号来源：人 → AI。</span></span></div>
+        <div class="step"><span class="si">GRPO</span><span class="sc"><b>组内相对优势，去掉 critic</b><em>更轻的 on-policy RL</em><span>用一组样本的相对名次当基线，省下 value model；让在线 RL 在推理任务上更省、更稳。</span></span></div>
+        <div class="step"><span class="si">RLVR</span><span class="sc"><b>奖励来自可验证的对错</b><em>数学 / 代码</em><span>检查器代替学出来的 RM，根除「刷 RM 分」这层 hack；是推理模型的主引擎。</span></span></div>
+        <div class="step"><span class="si">KTO / IPO</span><span class="sc"><b>DPO 的变体</b><em>放宽数据 / 修过拟合</em><span>KTO 只需「好/坏」二元标签、不必成对；IPO 修正 DPO 在偏好近乎确定时的过拟合。</span></span></div>
+      </div>
+      <p class="desc reveal d2">把它们串起来，会发现对齐的核心张力<b>始终如一</b>——我们没有「好答案」的损失函数，只能用一个会被钻空子的代理，去逼近人的偏好。RM + PPO、DPO、可验证奖励，不过是在「信号从哪来、优化得多激进、代理多容易被 hack」之间，做了不同的取舍。</p>
+    </section>
+
+    <!-- FINALE -->
+    <section class="finale" id="finale">
+      <div class="mark">End of Field Note</div>
+      <h3>没有「好答案」的损失函数——对齐能做的，是教模型学会人类的「更喜欢」，再小心别让它学会钻空子。</h3>
+      <a class="nextpost" href="../index.html">← 回到原理手记，看下一篇</a>
+    </section>
+  </main>
+
+<script>
+(function(){
+  // ── theme toggle (shared key across the whole blog — never rename) ──
+  const themeBtn=document.getElementById('themeBtn');
+  if(localStorage.getItem('llm-theme')==='light') document.documentElement.setAttribute('data-theme','light');
+  themeBtn.addEventListener('click',()=>{
+    const isLight=document.documentElement.getAttribute('data-theme')==='light';
+    if(isLight){document.documentElement.removeAttribute('data-theme');localStorage.setItem('llm-theme','dark');}
+    else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('llm-theme','light');}
+  });
+
+  // ── reading progress bar ──
+  const readBar=document.getElementById('readBar');
+  let ticking=false;
+  function onScroll(){
+    if(ticking) return; ticking=true;
+    requestAnimationFrame(()=>{
+      const h=document.documentElement, max=h.scrollHeight-h.clientHeight;
+      readBar.style.width=(max>0?(h.scrollTop/max*100):0)+'%';
+      ticking=false;
+    });
+  }
+  window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  // ── reveal on scroll (editorial: add .in when a section enters view) ──
+  const io=new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('in'); });
+  },{threshold:0.12,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.hero,.section').forEach(s=>io.observe(s));
+
+  // ── §1 pipeline flow diagram (build once) ────────────────
+  (function(){
+    const box=document.getElementById('pipeBox'); if(!box) return;
+    const W=880,H=276;
+    function pbx(x,y,w,h,t,s,cls){
+      const cx=x+w/2, cy=y+h/2;
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9" class="pbx ${cls||''}"/>`+
+             `<text x="${cx}" y="${cy-(s?3:4)}" text-anchor="middle" class="ptt">${t}</text>`+
+             (s?`<text x="${cx}" y="${cy+12}" text-anchor="middle" class="pst">${s}</text>`:'');
+    }
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    svg+=`<defs>`+
+      `<marker id="aN" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-dim)"/></marker>`+
+      `<marker id="aA" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--accent)"/></marker>`+
+      `<marker id="aS" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--sage)"/></marker>`+
+    `</defs>`;
+    // arrows first (under boxes)
+    svg+=`<path class="pln n" d="M104,151 L124,151" marker-end="url(#aN)"/>`;
+    svg+=`<path class="pln n" d="M238,151 L258,151" marker-end="url(#aN)"/>`;
+    svg+=`<path class="pln a" d="M382,151 C414,151 410,67 432,67" marker-end="url(#aA)"/>`;
+    svg+=`<path class="pln s" d="M382,151 C414,151 410,235 432,235" marker-end="url(#aS)"/>`;
+    svg+=`<path class="pln a" d="M738,67 C760,67 752,151 766,151" marker-end="url(#aN)"/>`;
+    svg+=`<path class="pln s" d="M738,235 C760,235 752,151 766,151" marker-end="url(#aN)"/>`;
+    // boxes
+    svg+=pbx(8,128,96,46,'预训练','自监督');
+    svg+=pbx(128,128,110,46,'SFT','指令微调');
+    svg+=pbx(262,128,120,46,'偏好数据','优 ≻ 劣');
+    svg+=pbx(438,44,300,46,'Reward Model → PPO','经典 RLHF · 在线 on-policy','a');
+    svg+=pbx(438,212,300,46,'DPO','直接偏好优化 · 离线 off-policy','s');
+    svg+=pbx(772,128,100,46,'对齐模型','可部署','g');
+    svg+='</svg>';
+    box.innerHTML=svg;
+  })();
+
+  // ── §2 Bradley-Terry sigmoid (build once + live update) ──
+  (function(){
+    const box=document.getElementById('btBox'); if(!box) return;
+    const W=460,H=240,x0=46,x1=442,yTop=20,yBot=200;
+    const DMIN=-6,DMAX=6;
+    const X=d=>x0+(x1-x0)*(d-DMIN)/(DMAX-DMIN);
+    const Y=p=>yBot-(yBot-yTop)*p;
+    const sig=z=>1/(1+Math.exp(-z));
+    // static curve
+    let dpath='';
+    for(let s=0;s<=200;s++){ const d=DMIN+(DMAX-DMIN)*s/200; dpath+=(s===0?'M':'L')+X(d).toFixed(1)+' '+Y(sig(d)).toFixed(1)+' '; }
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    svg+=`<line x1="${x0}" y1="${yBot}" x2="${x1}" y2="${yBot}" class="axis-line"/>`;
+    svg+=`<line x1="${X(0)}" y1="${yTop}" x2="${X(0)}" y2="${yBot}" class="axis-dash"/>`;
+    svg+=`<line x1="${x0}" y1="${Y(0.5)}" x2="${x1}" y2="${Y(0.5)}" class="axis-dash"/>`;
+    svg+=`<path d="${dpath}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+    // movable marker
+    svg+=`<line id="btV" class="axis-dash" x1="0" y1="${yBot}" x2="0" y2="0" stroke="var(--sage)"/>`;
+    svg+=`<line id="btHl" class="axis-dash" x1="${x0}" y1="0" x2="0" y2="0" stroke="var(--sage)"/>`;
+    svg+=`<circle id="btDot" cx="0" cy="0" r="5" fill="var(--accent)"/>`;
+    // labels
+    svg+=`<text x="${x0-4}" y="${Y(1)+3}" text-anchor="end" class="axis-txt">1</text>`;
+    svg+=`<text x="${x0-4}" y="${Y(0.5)+3}" text-anchor="end" class="axis-txt">.5</text>`;
+    svg+=`<text x="${x0-4}" y="${Y(0)+3}" text-anchor="end" class="axis-txt">0</text>`;
+    svg+=`<text x="${X(0)}" y="${yBot+15}" text-anchor="middle" class="axis-txt">0</text>`;
+    svg+=`<text x="${x1}" y="${yBot+15}" text-anchor="end" class="axis-txt">Δr = r(y_w) − r(y_l) →</text>`;
+    svg+='</svg>';
+    box.innerHTML=svg;
+
+    const rw=document.getElementById('rwSlider'), rl=document.getElementById('rlSlider');
+    const rwTag=document.getElementById('rwTag'), rlTag=document.getElementById('rlTag');
+    const read=document.getElementById('btRead');
+    const dot=document.getElementById('btDot'), vln=document.getElementById('btV'), hln=document.getElementById('btHl');
+    const fmtNeg=v=>(v<0?'−'+Math.abs(v).toFixed(1):v.toFixed(1));
+    function upd(){
+      const a=+rw.value, b=+rl.value, diff=a-b, dc=Math.max(DMIN,Math.min(DMAX,diff)), p=sig(diff);
+      rwTag.textContent='r(y_w)='+fmtNeg(a); rlTag.textContent='r(y_l)='+fmtNeg(b);
+      const px=X(dc), py=Y(p);
+      dot.setAttribute('cx',px); dot.setAttribute('cy',py);
+      vln.setAttribute('x1',px); vln.setAttribute('x2',px); vln.setAttribute('y1',yBot); vln.setAttribute('y2',py);
+      hln.setAttribute('x1',x0); hln.setAttribute('x2',px); hln.setAttribute('y1',py); hln.setAttribute('y2',py);
+      const loss=-Math.log(p);
+      if(window.katex){
+        read.innerHTML='';
+        katex.render(`\\Delta r=${fmtNeg(diff)}\\;\\Rightarrow\\; P(y_w\\succ y_l)=\\sigma(${fmtNeg(diff)})=\\htmlClass{m-v}{${p.toFixed(3)}}`,
+          read.appendChild(document.createElement('div')),{throwOnError:false,trust:true,strict:false});
+        katex.render(`\\mathcal{L}_{\\text{RM}}=-\\log(${p.toFixed(3)})=\\htmlClass{m-v}{${loss.toFixed(3)}}`,
+          read.appendChild(document.createElement('div')),{throwOnError:false,trust:true,strict:false});
+      } else {
+        read.textContent=`Δr=${diff.toFixed(1)} → P=${p.toFixed(3)} → loss=${loss.toFixed(3)}`;
+      }
+    }
+    rw.addEventListener('input',upd); rl.addEventListener('input',upd);
+    box._upd=upd; // re-run after KaTeX ready
+  })();
+
+  // ── §3 PPO clip curve (build once) ───────────────────────
+  (function(){
+    const box=document.getElementById('clipBox'); if(!box) return;
+    const W=460,H=200,x0=46,x1=444,y0=H-26,yTop=16;
+    const RMIN=0.4,RMAX=1.6,EPS=0.2;
+    const X=r=>x0+(x1-x0)*(r-RMIN)/(RMAX-RMIN);
+    const Y=v=>yTop+(y0-yTop)*(RMAX-v)/(RMAX-RMIN); // map objective value on same scale as ratio
+    // unclipped y = ratio (faint); clipped y = min(ratio, 1+eps)
+    let un='', cl='';
+    for(let s=0;s<=120;s++){ const r=RMIN+(RMAX-RMIN)*s/120; un+=(s===0?'M':'L')+X(r).toFixed(1)+' '+Y(r).toFixed(1)+' '; const c=Math.min(r,1+EPS); cl+=(s===0?'M':'L')+X(r).toFixed(1)+' '+Y(c).toFixed(1)+' '; }
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    // shaded trust region [1-eps, 1+eps]
+    svg+=`<rect x="${X(1-EPS)}" y="${yTop}" width="${X(1+EPS)-X(1-EPS)}" height="${y0-yTop}" fill="rgba(127,145,131,0.10)"/>`;
+    svg+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${X(1)}" y1="${yTop}" x2="${X(1)}" y2="${y0}" class="axis-dash"/>`;
+    svg+=`<path d="${un}" fill="none" stroke="var(--ink-faint)" stroke-width="1.4" stroke-dasharray="4 4"/>`;
+    svg+=`<path d="${cl}" fill="none" stroke="var(--accent)" stroke-width="2.4"/>`;
+    // kink dot
+    svg+=`<circle cx="${X(1+EPS)}" cy="${Y(1+EPS)}" r="4" fill="var(--accent)"/>`;
+    svg+=`<text x="${X(1)}" y="${y0+15}" text-anchor="middle" class="axis-txt">ρ=1</text>`;
+    svg+=`<text x="${X(1+EPS)}" y="${y0+15}" text-anchor="middle" class="axis-txt">1+ε</text>`;
+    svg+=`<text x="${X(1-EPS)}" y="${y0+15}" text-anchor="middle" class="axis-txt">1−ε</text>`;
+    svg+=`<text x="${X(1+EPS)+6}" y="${Y(1+EPS)-4}" class="axis-txt">越过此处 → 剪平</text>`;
+    svg+=`<text x="${x1}" y="${y0+15}" text-anchor="end" class="axis-txt">重要性比 ρ →</text>`;
+    svg+=`<text x="${x0-4}" y="${yTop+8}" text-anchor="end" class="axis-txt">目标</text>`;
+    svg+='</svg>';
+    box.innerHTML=svg;
+  })();
+
+  // ── §4 Goodhart curves (build once) ──────────────────────
+  (function(){
+    const box=document.getElementById('ghBox'); if(!box) return;
+    const W=520,H=200,x0=40,x1=W-16,y0=H-26,yTop=16;
+    const X=t=>x0+(x1-x0)*t;
+    const Y=v=>yTop+(y0-yTop)*(1-v);
+    const proxy=t=>1-Math.exp(-3.2*t);
+    const peak=0.45;
+    const truef=t=>{ const v=4*t*(0.92-t)/(0.92*0.92); return Math.max(0,v); };
+    let pp='',tt='';
+    for(let s=0;s<=160;s++){ const t=s/160; pp+=(s===0?'M':'L')+X(t).toFixed(1)+' '+Y(proxy(t)).toFixed(1)+' '; tt+=(s===0?'M':'L')+X(t).toFixed(1)+' '+Y(truef(t)).toFixed(1)+' '; }
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    svg+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${x0}" y1="${yTop}" x2="${x0}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${X(peak)}" y1="${yTop}" x2="${X(peak)}" y2="${y0}" class="axis-dash"/>`;
+    svg+=`<path d="${pp}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>`;
+    svg+=`<path d="${tt}" fill="none" stroke="var(--sage)" stroke-width="2.2"/>`;
+    svg+=`<circle cx="${X(peak)}" cy="${Y(truef(peak))}" r="4" fill="var(--sage)"/>`;
+    svg+=`<text x="${X(peak)+5}" y="${yTop+10}" class="axis-txt">背离点</text>`;
+    svg+=`<text x="${x1}" y="${y0+15}" text-anchor="end" class="axis-txt">优化压力 →</text>`;
+    svg+=`<text x="${x0-4}" y="${yTop+8}" text-anchor="end" class="axis-txt">高</text>`;
+    svg+='</svg>';
+    box.innerHTML=svg;
+  })();
+
+  // ── §8 GRPO group-relative advantage (build once) ────────
+  (function(){
+    const box=document.getElementById('grpoBox'); if(!box) return;
+    const W=460,H=200,x0=46,x1=444,y0=H-28,yTop=18;
+    const R=[0.82,0.20,0.93,0.10,0.55,0.34];
+    const mean=R.reduce((a,b)=>a+b,0)/R.length;
+    const Y=v=>yTop+(y0-yTop)*(1-v);
+    const xs=R.map((_,i)=>x0+(x1-x0)*(i+0.5)/R.length);
+    let svg=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+    svg+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" class="axis-line"/>`;
+    svg+=`<line x1="${x0}" y1="${Y(mean)}" x2="${x1}" y2="${Y(mean)}" class="axis-dash" stroke="var(--ink-dim)"/>`;
+    svg+=`<text x="${x1}" y="${Y(mean)-5}" text-anchor="end" class="axis-txt">组内均值 = baseline</text>`;
+    R.forEach((v,i)=>{
+      const col = v>=mean ? 'var(--accent)' : 'var(--sage)';
+      svg+=`<line x1="${xs[i].toFixed(1)}" y1="${Y(mean)}" x2="${xs[i].toFixed(1)}" y2="${Y(v)}" stroke="${col}" stroke-width="1.6"/>`;
+      svg+=`<circle cx="${xs[i].toFixed(1)}" cy="${Y(v)}" r="4.5" fill="${col}"/>`;
+      svg+=`<text x="${xs[i].toFixed(1)}" y="${y0+15}" text-anchor="middle" class="axis-txt">y${i+1}</text>`;
+    });
+    svg+=`<text x="${x0-4}" y="${yTop+8}" text-anchor="end" class="axis-txt">奖励</text>`;
+    svg+='</svg>';
+    box.innerHTML=svg;
+  })();
+
+  // ── render all math with KaTeX (deferred CDN scripts ready by DOMContentLoaded) ──
+  function renderHero(){
+    const el=document.getElementById('heroFormula');
+    if(!el||!window.katex) return;
+    katex.render(
+      "\\mathcal{L}_{\\text{DPO}}=-\\log\\sigma\\Big(\\beta\\,\\htmlClass{m-q}{\\log\\tfrac{\\pi_\\theta(y_w\\mid x)}{\\pi_{\\text{ref}}(y_w\\mid x)}}-\\beta\\,\\htmlClass{m-k}{\\log\\tfrac{\\pi_\\theta(y_l\\mid x)}{\\pi_{\\text{ref}}(y_l\\mid x)}}\\Big)",
+      el,{displayMode:true,throwOnError:false,trust:true,strict:false}
+    );
+  }
+  function renderAllMath(){
+    if(window.renderMathInElement){
+      try{
+        renderMathInElement(document.querySelector('main'),{
+          delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],
+          throwOnError:false,trust:true,strict:false
+        });
+      }catch(e){}
+    }
+    renderHero();
+    const bt=document.getElementById('btBox'); if(bt&&bt._upd) bt._upd();
+  }
+  if(window.katex&&window.renderMathInElement) renderAllMath();
+  else window.addEventListener('DOMContentLoaded',renderAllMath);
+})();
+</script>
+</body>
+</html>
